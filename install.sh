@@ -32,39 +32,32 @@ if ! has gum; then
   exit 1
 fi
 
-# ── Tool check helper ─────────────────────────────────────────────────────────
-# Returns a status badge string for display
-tool_badge() {
-  local tool="$1"
-  if has "$tool"; then
-    echo "$(gum style --foreground 82 "✓ $tool")"
-  else
-    echo "$(gum style --foreground 196 "✗ $tool not found")"
-  fi
-}
-
 # ask_section <header> <description> <tools...>
-# Displays a confirm prompt with tool availability badges.
-# Defaults to Y if all tools found, N if any missing.
+# Uses gum confirm (exit code) so it works correctly inside $() subshells.
+# All context shown inside the confirm prompt — no floating text above.
 ask_section() {
   local header="$1"
   local desc="$2"
   shift 2
   local tools=("$@")
   local all_found=true
-  local badges=""
+  local tool_line=""
   for t in "${tools[@]}"; do
-    badges+="  $(tool_badge "$t")\n"
-    has "$t" || all_found=false
+    if has "$t"; then
+      tool_line+="✓ $t  "
+    else
+      tool_line+="✗ $t  "
+      all_found=false
+    fi
   done
-  echo ""
-  gum style --bold "  $header"
-  gum style --foreground 245 "  $desc"
-  printf "$badges"
+
+  local prompt
+  prompt=$(printf "%s\n  %s\n  %s" "$header" "$desc" "$tool_line")
+
   if [[ "$all_found" == true ]]; then
-    gum confirm "  Enable?" && echo true || echo false
+    gum confirm "$prompt" && echo true || echo false
   else
-    gum confirm --default=false "  Enable? (missing tools)" && echo true || echo false
+    gum confirm --default=false "$prompt" && echo true || echo false
   fi
 }
 
@@ -77,7 +70,9 @@ main() {
     --bold "rig — interactive installer"
 
   gum style --foreground 245 \
-    "  Configure which sections appear in rig.\n  Tools marked ✗ can still be enabled if you plan to install them."
+    "  Configure which sections appear in rig."
+  gum style --foreground 245 \
+    "  Tools marked ✗ can still be enabled if you plan to install them."
 
   # ── Collected values ─────────────────────────────────────────────────────
   local nav_files nav_dirs nav_dirs_zoxide nav_text
@@ -133,11 +128,8 @@ main() {
     "python3")
 
   # Django always asks for log path
-  echo ""
-  gum style --bold "  Django (current project)"
-  gum style --foreground 245 "  Searches for a log file relative to \$PWD."
-  echo ""
-  if gum confirm "  Enable Django logs?"; then
+  if gum confirm --default=true "Django (current project)
+  Searches for a log file relative to \$PWD."; then
     dev_django=true
     django_log=$(gum input \
       --placeholder "Log path relative to project root" \
@@ -161,17 +153,13 @@ main() {
     "systemctl")
 
   # System logs — ask + collect custom log files
-  echo ""
-  gum style --bold "  System logs"
-  gum style --foreground 245 "  journalctl, dmesg, boot log + any custom log files you add."
-  echo ""
-  if gum confirm "  Enable system logs?"; then
+  if gum confirm --default=true "System logs
+  journalctl, dmesg, boot log + any custom log files you add."; then
     sys_logs=true
-    # Collect custom log files
     log_files=""
     echo ""
-    gum style --foreground 245 "  Add custom log files (e.g. /var/log/nginx/error.log)."
-    gum style --foreground 245 "  Leave label empty to stop adding."
+    gum style --foreground 245 "  Add custom log files — label + path pairs."
+    gum style --foreground 245 "  Leave label empty to finish."
     echo ""
     while true; do
       local _lbl
@@ -180,15 +168,10 @@ main() {
       local _path
       _path=$(gum input --placeholder "/var/log/..." --prompt "  path  › ")
       [[ -z "$_path" ]] && break
-      if [[ -z "$log_files" ]]; then
-        log_files="${_lbl}:${_path}"
-      else
-        log_files="${log_files}|${_lbl}:${_path}"
-      fi
-      gum style --foreground 82 "  ✓ Added: $_lbl → $_path"
+      [[ -z "$log_files" ]] && log_files="${_lbl}:${_path}" \
+                             || log_files="${log_files}|${_lbl}:${_path}"
+      ok "Added: $_lbl → $_path"
     done
-    [[ -n "$log_files" ]] && gum style --foreground 245 "  Log files saved." \
-      || gum style --foreground 245 "  No custom log files added (journalctl/dmesg still available)."
   else
     sys_logs=false
     log_files=""
@@ -203,11 +186,9 @@ main() {
     "ss")
 
   # SSH — ask + collect config path
-  echo ""
-  gum style --bold "  SSH"
-  gum style --foreground 245 "  Hosts from SSH config with preview and connect/tmux actions."
-  echo ""
-  if gum confirm "  Enable SSH?"; then
+  local _ssh_found; has ssh && _ssh_found="✓ ssh" || _ssh_found="✗ ssh not found"
+  if gum confirm --default=true "SSH
+  Hosts from config with preview and connect/tmux actions.  $_ssh_found"; then
     net_ssh=true
     ssh_config=$(gum input \
       --placeholder "SSH config path" \
@@ -236,31 +217,23 @@ main() {
     "curl")
 
   # Weather — ask + collect cities
-  echo ""
-  gum style --bold "  Weather (wttr.in)"
-  gum style --foreground 245 "  Fetches weather for configured cities or any manual input."
-  echo ""
-  if gum confirm "  Enable weather?"; then
+  local _curl_found; has curl && _curl_found="✓ curl" || _curl_found="✗ curl not found"
+  if gum confirm --default=true "Weather (wttr.in)
+  Fetches weather for configured cities or any manual input.  $_curl_found"; then
     tool_weather=true
     weather_cities=""
     echo ""
     gum style --foreground 245 "  Add cities to the quick-select menu."
-    gum style --foreground 245 "  Leave empty to stop. You can always type a city manually."
+    gum style --foreground 245 "  Leave empty to finish. You can always type a city manually in rig."
     echo ""
     while true; do
       local _city
       _city=$(gum input --placeholder "City name — empty to finish" --prompt "  city › ")
       [[ -z "$_city" ]] && break
-      if [[ -z "$weather_cities" ]]; then
-        weather_cities="$_city"
-      else
-        weather_cities="${weather_cities}|${_city}"
-      fi
-      gum style --foreground 82 "  ✓ Added: $_city"
+      [[ -z "$weather_cities" ]] && weather_cities="$_city" \
+                                 || weather_cities="${weather_cities}|${_city}"
+      ok "Added: $_city"
     done
-    [[ -n "$weather_cities" ]] \
-      && gum style --foreground 245 "  Cities saved." \
-      || gum style --foreground 245 "  No cities added — will always prompt for manual input."
   else
     tool_weather=false
     weather_cities=""
@@ -359,7 +332,8 @@ EOF
       gum style --foreground 245 "  Add to ~/.zshrc:"
       gum style --foreground 212 "  source ~/.config/zsh/rig.zsh"
       echo ""
-      if gum confirm "  Add automatically?"; then
+      if gum confirm "Add to ~/.zshrc?
+  source ~/.config/zsh/rig.zsh"; then
         echo 'source ~/.config/zsh/rig.zsh' >> "$HOME/.zshrc"
         ok "Added to ~/.zshrc"
       fi
