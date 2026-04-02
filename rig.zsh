@@ -25,10 +25,13 @@ function rig() {
     # Defaults: everything enabled when no config file is present
     RIG_NAV_FILES=true; RIG_NAV_DIRS=true; RIG_NAV_DIRS_ZOXIDE=true; RIG_NAV_TEXT=true
     RIG_DEV_DOCKER=true; RIG_DEV_DJANGO=true; RIG_DEV_PYTHON=true; RIG_DEV_GIT=true
-    RIG_SYS_LOGS=true; RIG_SYS_SYSTEMD=true; RIG_SYS_PROCS=true
+    RIG_SYS_LOGS=true; RIG_SYS_SYSTEMD=true; RIG_SYS_PROCS=true; RIG_SYS_BACKUP=false
     RIG_NET_PORTS=true; RIG_NET_SSH=true; RIG_NET_WG=true
     RIG_TOOL_CHEAT=true; RIG_TOOL_ENV=true; RIG_TOOL_WEATHER=true
     RIG_DJANGO_LOG="logs/django.log"
+    RIG_BACKUP_SOURCE="$HOME"
+    RIG_BACKUP_DESTINATIONS=""
+    RIG_BACKUP_EXCLUDES_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/rig/rsync-excludes.txt"
   fi
 
   # ── gum colors / styles ───────────────────────────────────────────────────
@@ -48,6 +51,7 @@ function rig() {
   [[ "$RIG_SYS_LOGS"     == true ]] && _menu+=("[sys]   📋  System logs")
   [[ "$RIG_SYS_SYSTEMD"  == true ]] && _menu+=("[sys]   ⚙️   Systemd services")
   [[ "$RIG_SYS_PROCS"    == true ]] && _menu+=("[sys]   🖥️   Processes")
+  [[ "$RIG_SYS_BACKUP"   == true ]] && _menu+=("[sys]   💾  Backup (rsync)")
   [[ "$RIG_NET_PORTS"    == true ]] && _menu+=("[net]   🖧   Ports / Connections")
   [[ "$RIG_NET_SSH"      == true ]] && _menu+=("[net]   🔌  SSH")
   [[ "$RIG_NET_WG"       == true ]] && _menu+=("[net]   🔒  WireGuard (wgs)")
@@ -521,9 +525,103 @@ function rig() {
 
     # ── SSH ─────────────────────────────────────────────────────
     *"SSH")
-      tv ssh-hosts
+      while true; do
+        local ssh_action
+        ssh_action=$(gum choose \
+          --header "  SSH  (Esc: back to main)" \
+          "🔌  Connect to host" \
+          "📁  Mount filesystem (sshfs)" \
+          "🌐  SOCKS proxy tunnel" \
+          "🔀  Port forward tunnel" \
+          "🖥️   Run remote app (X11/Wayland)")
+        [[ -z "$ssh_action" ]] && break
+        case "$ssh_action" in
+          *"Connect"*)      _rig_ssh_connect ;;
+          *"Mount"*)        _rig_ssh_sshfs ;;
+          *"SOCKS"*)        _rig_ssh_socks ;;
+          *"Port forward"*) _rig_ssh_tunnel ;;
+          *"remote app"*)   _rig_ssh_remote_app ;;
+        esac
+      done
       ;;
 
+    # ── Backup ──────────────────────────────────────────────────
+    *"Backup (rsync)")
+      local _backup_src="${RIG_BACKUP_SOURCE:-$HOME}"
+      local _excludes="${RIG_BACKUP_EXCLUDES_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/rig/rsync-excludes.txt}"
+      local _ssh_cfg="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
+
+      # Build destination list from conf + optional SSH picker entry
+      local _dest_list=()
+      if [[ -n "${RIG_BACKUP_DESTINATIONS:-}" ]]; then
+        local IFS='|'
+        for _d in $RIG_BACKUP_DESTINATIONS; do
+          _dest_list+=("$_d")
+        done
+        unset IFS
+      fi
+      # If SSH config exists, always offer ad-hoc SSH destination
+      [[ -f "$_ssh_cfg" ]] && _dest_list+=("🔌  Pick SSH host from config...")
+
+      if [[ ${#_dest_list[@]} -eq 0 ]]; then
+        gum style --foreground 196 "  No backup destinations configured. Run install.sh."
+        sleep 3; continue
+      fi
+
+      local backup_action
+      backup_action=$(gum choose \
+        --header "  Backup  (Esc: back)" \
+        "▶️   Run backup" \
+        "🔍  Dry run (preview changes)" \
+        "📋  View last backup log")
+      [[ -z "$backup_action" ]] && continue
+
+      if [[ "$backup_action" == "📋"* ]]; then
+        local _log_file="$HOME/.local/share/rig/backup.log"
+        if [[ -f "$_log_file" ]]; then less -R "$_log_file"
+        else gum style --foreground 196 "  No backup log yet."; sleep 2
+        fi
+        continue
+      fi
+
+      # Select destination
+      local dest=""
+      if [[ ${#_dest_list[@]} -eq 1 ]]; then
+        dest="${_dest_list[0]}"
+      else
+        dest=$(printf '%s\n' "${_dest_list[@]}" \
+          | gum filter --header "  Select destination  (Esc: back)" --placeholder "filter...")
+        [[ -z "$dest" ]] && continue
+      fi
+
+      # SSH config picker for ad-hoc destination
+      if [[ "$dest" == "🔌"* ]]; then
+        dest=$(_rig_backup_pick_ssh_dest)
+        [[ -z "$dest" ]] && continue
+      fi
+
+      local -a _rsync_opts=(-aAXh --progress)
+      [[ "$backup_action" == "🔍"* ]] && _rsync_opts+=(--dry-run)
+      [[ -f "$_excludes" ]] && _rsync_opts+=(--exclude-from="$_excludes")
+
+      local _log_dir="$HOME/.local/share/rig"
+      local _log_file="$_log_dir/backup.log"
+      mkdir -p "$_log_dir"
+
+      gum style --foreground 214 "  Source:      $_backup_src"
+      gum style --foreground 214 "  Destination: $dest"
+      [[ "$backup_action" == "🔍"* ]] && \
+        gum style --foreground 226 "  DRY RUN — no files will be written"
+      echo ""
+      if [[ "$backup_action" == "▶️"* ]]; then
+        rsync "${_rsync_opts[@]}" "$_backup_src/" "$dest/" 2>&1 | tee "$_log_file"
+      else
+        rsync "${_rsync_opts[@]}" "$_backup_src/" "$dest/"
+      fi
+      echo ""
+      gum style --foreground 82 "  ✓ Done"
+      sleep 2
+      ;;
     # ── WireGuard ───────────────────────────────────────────────
     *"WireGuard"*)
       wgs
@@ -592,7 +690,147 @@ function rig() {
   trap - INT
 }
 
-# ── Helper: log viewer — search or follow live ────────────────────────────────
+# ── Helper: SSH — connect ─────────────────────────────────────────────────────
+function _rig_ssh_connect() {
+  tv ssh-hosts
+}
+
+# ── Helper: SSH — sshfs mount ─────────────────────────────────────────────────
+function _rig_ssh_sshfs() {
+  if ! command -v sshfs &>/dev/null; then
+    gum style --foreground 196 "  sshfs is not installed."; sleep 2; return 0
+  fi
+  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
+  local host
+  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
+    | fzf --header 'Select host to mount | Esc: back' --height 80% --border)
+  [[ -z "$host" ]] && return 0
+
+  local remote_dir
+  remote_dir=$(gum input \
+    --value "/home/$USER" \
+    --prompt "  remote dir  › " \
+    --placeholder "Remote directory")
+  [[ -z "$remote_dir" ]] && return 0
+
+  local mount_point
+  mount_point=$(gum input \
+    --value "$HOME/mnt/$host" \
+    --prompt "  mount point › " \
+    --placeholder "Local mount point (created if missing)")
+  [[ -z "$mount_point" ]] && return 0
+
+  [[ ! -d "$mount_point" ]] && mkdir -p "$mount_point" \
+    && gum style --foreground 82 "  ✓ Created $mount_point"
+
+  gum style --foreground 214 "  Mounting $host:$remote_dir → $mount_point..."
+  if sshfs "$host:$remote_dir" "$mount_point"; then
+    gum style --foreground 82 "  ✓ Mounted — unmount with: fusermount -u $mount_point"
+  else
+    gum style --foreground 196 "  ✗ Mount failed"
+  fi
+  sleep 3
+}
+
+# ── Helper: SSH — SOCKS proxy tunnel ─────────────────────────────────────────
+function _rig_ssh_socks() {
+  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
+  local host
+  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
+    | fzf --header 'Select host for SOCKS proxy | Esc: back' --height 80% --border)
+  [[ -z "$host" ]] && return 0
+
+  local port
+  port=$(gum input --value "1080" --prompt "  local SOCKS port › " --placeholder "1080")
+  [[ -z "$port" ]] && return 0
+
+  gum style --foreground 214 "  SOCKS proxy via $host on localhost:$port"
+  gum style --foreground 245 "  Configure your browser/app to use SOCKS5 localhost:$port"
+  gum style --foreground 245 "  Ctrl+C to stop."
+  sleep 1
+  ssh -D "$port" -N -C "$host"
+}
+
+# ── Helper: SSH — port forward tunnel ────────────────────────────────────────
+function _rig_ssh_tunnel() {
+  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
+  local host
+  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
+    | fzf --header 'Select SSH host | Esc: back' --height 80% --border)
+  [[ -z "$host" ]] && return 0
+
+  local direction
+  direction=$(gum choose \
+    --header "  Tunnel direction  (Esc: back)" \
+    "-L  Local → Remote   (access a remote service locally)" \
+    "-R  Remote → Local   (expose a local service remotely)")
+  [[ -z "$direction" ]] && return 0
+
+  local local_port
+  local_port=$(gum input --prompt "  local port   › " --placeholder "e.g. 8080")
+  [[ -z "$local_port" ]] && return 0
+
+  local remote_host
+  remote_host=$(gum input --value "localhost" --prompt "  remote host  › " --placeholder "localhost or 10.0.0.x")
+  [[ -z "$remote_host" ]] && return 0
+
+  local remote_port
+  remote_port=$(gum input --prompt "  remote port  › " --placeholder "e.g. 5432")
+  [[ -z "$remote_port" ]] && return 0
+
+  local flag="-L"
+  [[ "$direction" == "-R"* ]] && flag="-R"
+
+  gum style --foreground 214 "  Tunnel: ssh $flag ${local_port}:${remote_host}:${remote_port} $host"
+  gum style --foreground 245 "  Ctrl+C to stop."
+  sleep 1
+  ssh "$flag" "${local_port}:${remote_host}:${remote_port}" -N -C "$host"
+}
+
+# ── Helper: SSH — run remote app locally (X11 forwarding) ────────────────────
+function _rig_ssh_remote_app() {
+  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
+  local host
+  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
+    | fzf --header 'Select host | Esc: back' --height 80% --border)
+  [[ -z "$host" ]] && return 0
+
+  local app
+  app=$(gum input \
+    --prompt "  remote command › " \
+    --placeholder "e.g. firefox, xterm, code, gimp")
+  [[ -z "$app" ]] && return 0
+
+  gum style --foreground 214 "  Launching $app from $host with X11 forwarding..."
+  sleep 1
+  # -X X11 forwarding, -C compression, run app in background
+  ssh -X -C "$host" "DISPLAY=:0 $app" &
+  local _pid=$!
+  gum style --foreground 82 "  ✓ $app launched (PID $_pid)"
+  gum style --foreground 245 "  Process runs in background. Close the app window to stop."
+  sleep 3
+}
+
+# ── Helper: Backup — pick SSH host + remote path as rsync destination ─────────
+# Returns "host:/remote/path" or empty string if cancelled
+function _rig_backup_pick_ssh_dest() {
+  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
+  local host
+  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
+    | fzf --header 'Select SSH host for backup | Esc: cancel' --height 80% --border)
+  [[ -z "$host" ]] && return 0
+
+  local remote_path
+  remote_path=$(gum input \
+    --value "/home/$USER" \
+    --prompt "  remote backup path › " \
+    --placeholder "Remote directory")
+  [[ -z "$remote_path" ]] && return 0
+
+  echo "${host}:${remote_path}"
+}
+
+
 # Usage: _rig_log_menu <path_or_special> [source_cmd]
 # Special names: "journalctl-boot", "dmesg"
 function _rig_log_menu() {
