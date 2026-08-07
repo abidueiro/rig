@@ -1,0 +1,58 @@
+# television cable channel: docker containers
+# Provides: interactive docker container browser with contextual actions
+# Usage: tv docker-all
+
+[cable]
+name = "docker-all"
+description = "Docker containers with actions"
+
+[source]
+command = '''
+  docker ps -a \
+    --format '{{.Names}}\t{{.Status}}\t{{.Image}}\t{{.ID}}' 2>/dev/null
+'''
+# fallback = "echo 'No containers'"
+
+[input]
+title = " {{ cyan(foldername) }}  {{ . | 1 | yellow }}"
+[input.format]
+fields = [
+  { name = "name",   method = "split", delimiter = "\t", position = 0 },
+  { name = "status", method = "split", delimiter = "\t", position = 1 },
+  { name = "image",  method = "split", delimiter = "\t", position = 2 },
+  { name = "id",     method = "split", delimiter = "\t", position = 3 },
+]
+
+[preview]
+command = "docker inspect {id} 2>/dev/null | bat -l json --color=always --line-range :60"
+# delay = "150ms"
+
+[[keybindings]]
+key = "enter"
+action = "docker logs --tail 100 {name} | less -R"
+description = "View logs"
+
+[[keybindings]]
+key = "ctrl-i"
+action = "docker inspect {name} | less -R"
+description = "Inspect"
+
+[[keybindings]]
+key = "ctrl-s"
+action = "clear && docker exec -it {name} sh -c 'command -v bash >/dev/null && exec bash || exec sh'"
+description = "Shell into container"
+
+[[keybindings]]
+key = "ctrl-r"
+action = "docker restart {name} && echo 'Restarted {name}'"
+description = "Restart"
+
+[[keybindings]]
+key = "ctrl-k"
+action = "docker stop {name} && echo 'Stopped {name}'"
+description = "Stop"
+
+[[keybindings]]
+key = "ctrl-x"
+action = "docker rm -f {name} && echo 'Removed {name}'"
+description = "Remove"

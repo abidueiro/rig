@@ -1,0 +1,44 @@
+# television cable channel: git commit log
+# Provides: interactive commit browser with diff/stat preview
+# Usage: tv git-log
+
+[cable]
+name = "git-log"
+description = "Git commit log browser"
+
+[source]
+command = '''
+  git log \
+    --color=always \
+    --format="%h%x09%an%x09%ar%x09%s" \
+    -n 200 2>/dev/null
+'''
+
+[input]
+title = " {{ cyan(foldername) }}  {{ . | 1 | yellow }}"
+[input.format]
+fields = [
+  { name = "hash",    method = "split", delimiter = "\t", position = 0 },
+  { name = "author",  method = "split", delimiter = "\t", position = 1 },
+  { name = "date",    method = "split", delimiter = "\t", position = 2 },
+  { name = "message", method = "split", delimiter = "\t", position = 3 },
+]
+
+[preview]
+command = "git show --stat --color=always {hash} 2>/dev/null"
+# delay = "150ms"
+
+[[keybindings]]
+key = "enter"
+action = "git show --color=always {hash} | less -R"
+description = "View full diff"
+
+[[keybindings]]
+key = "ctrl-c"
+action = "echo {hash} | tr -d '\n' | wl-copy 2>/dev/null || echo {hash} | tr -d '\n' | xclip -selection clipboard 2>/dev/null || true"
+description = "Copy hash"
+
+[[keybindings]]
+key = "ctrl-b"
+action = "git branch --contains {hash} | head -5"
+description = "Branches containing"

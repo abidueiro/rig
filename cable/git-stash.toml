@@ -1,0 +1,42 @@
+# television cable channel: git stash
+# Provides: interactive stash browser with diff preview and apply/pop
+# Usage: tv git-stash
+
+[cable]
+name = "git-stash"
+description = "Git stash browser"
+
+[source]
+command = '''
+  git stash list \
+    --format="%gd%x09%an%x09%ar%x09%s" 2>/dev/null
+'''
+
+[input]
+title = " {{ cyan(foldername) }}  {{ . | 1 | yellow }}"
+[input.format]
+fields = [
+  { name = "ref",     method = "split", delimiter = "\t", position = 0 },
+  { name = "author",  method = "split", delimiter = "\t", position = 1 },
+  { name = "date",    method = "split", delimiter = "\t", position = 2 },
+  { name = "message", method = "split", delimiter = "\t", position = 3 },
+]
+
+[preview]
+command = "git stash show -p --color=always {ref} 2>/dev/null"
+# delay = "150ms"
+
+[[keybindings]]
+key = "enter"
+action = "git stash apply {ref} && echo '✓ Applied {ref} (kept in stash)' || echo '✗ Failed'"
+description = "Apply (keep)"
+
+[[keybindings]]
+key = "ctrl-p"
+action = "git stash pop {ref} && echo '✓ Popped {ref}' || echo '✗ Failed'"
+description = "Pop (remove)"
+
+[[keybindings]]
+key = "ctrl-x"
+action = "git stash drop {ref} && echo '✓ Dropped {ref}' || echo '✗ Failed'"
+description = "Drop"

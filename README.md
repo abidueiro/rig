@@ -2,6 +2,8 @@
 
 A TUI launcher for the terminal. Combines [television (tv)](https://github.com/alexpasmantier/television), [fzf](https://github.com/junegunn/fzf) and [gum](https://github.com/charmbracelet/gum) into a unified fuzzy menu with categories, previews and contextual actions.
 
+**Version:** 1.1.0
+
 ```
 rig — type to filter · [nav] [dev] [sys] [net] [tool]
 > search...
@@ -55,8 +57,38 @@ rig — type to filter · [nav] [dev] [sys] [net] [tool]
 | Option | Description |
 |--------|-------------|
 | Cheat sheets | cht.sh fuzzy search — inline preview, opens in `less` |
-| Environment variables | `tv env` |
+| Environment variables | `tv env` (falls back to `printenv \| fzf`) |
 | Weather | wttr.in — cities configured during install, plus manual input at any time |
+
+### Graceful degradation
+rig automatically falls back to simpler tools when preferred ones are unavailable:
+
+| Preferred | Fallback | Sections affected |
+|-----------|----------|-------------------|
+| `tv` (television) | `fzf` + shell pipes | Files, Docker, Git, SSH, Env vars |
+| `lazydocker` | `fzf` docker inspect preview | Docker containers |
+| `gitui` | `fzf` commit/branch/stash browser | Git (all subsections) |
+| `wgs` | `sudo wg show` | WireGuard |
+| `zoxide` | `fd` + `fzf` | Directory navigation |
+| `bat` | `head` / plain `cat` | File previews |
+| `fd` | `find` | File/directory search |
+
+When a tool is missing, rig either falls back silently or shows a brief notice. Nothing breaks — you just get a slightly simpler experience.
+
+### Television cable channels
+The `cable/` directory contains `.toml` configs for [television](https://github.com/alexpasmantier/television) that add structured browsing with context-aware keybindings:
+
+| Channel | Provides |
+|---------|----------|
+| `files-open.toml` | `fd` file listing. ctrl-o opens in editor |
+| `docker-all.toml` | Container browser. Inspect, logs, shell, restart, stop |
+| `ssh-hosts.toml` | SSH host browser with config preview |
+| `git-log.toml` | Commit browser with diff preview. Copy hash |
+| `git-branches.toml` | Branch browser with checkout and merge |
+| `git-stash.toml` | Stash browser with apply/pop/drop |
+| `git-modified.toml` | Modified files browser with stage/revert |
+
+These are auto-installed by `install.sh` if `tv` is available on your system.
 
 ---
 
@@ -92,16 +124,6 @@ rig — type to filter · [nav] [dev] [sys] [net] [tool]
 | `rsync` | Backup section |
 | `wgs` | WireGuard helper |
 
-### Television cable channels
-`.toml` files that go in `~/.config/television/cable/`:
-- `files-open.toml` — files with Zed / Ghostty actions
-- `docker-all.toml` — containers with contextual actions
-- `ssh-hosts.toml` — SSH hosts with config preview
-- `git-log.toml` — commits with diff preview
-- `git-branches.toml` — branches with checkout
-- `git-stash.toml` — stash with diff preview
-- `git-modified.toml` — modified files with diff preview
-
 ---
 
 ## Installation
@@ -109,7 +131,7 @@ rig — type to filter · [nav] [dev] [sys] [net] [tool]
 ### Option A — Interactive installer (recommended)
 
 ```bash
-git clone https://github.com/your-user/rig   # or copy the files
+git clone https://github.com/abidueiro/rig
 cd rig
 chmod +x install.sh
 ./install.sh
@@ -117,7 +139,14 @@ chmod +x install.sh
 
 The installer is a step-by-step wizard powered by `gum`. For each section it shows which tools are available (✓/✗) and asks whether to enable it. Sections with missing tools default to disabled but can still be turned on if you plan to install them later.
 
-The wizard also collects:
+**No gum?** The installer now supports `--minimal` mode with plain-text prompts. It can also attempt to auto-install gum via your package manager.
+
+```bash
+./install.sh --minimal   # text-only, no gum required
+./install.sh --help      # show options
+```
+
+The wizard collects:
 
 | Prompt | What it configures |
 |--------|--------------------|
@@ -254,6 +283,8 @@ The excludes file is a plain text file, one pattern per line, passed to rsync vi
 
 ```
 rig              # open the menu
+rig --help       # show help
+rig --version    # show version
 Ctrl+Space       # open from any prompt (zsh keybinding)
 ```
 

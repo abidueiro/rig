@@ -1,0 +1,53 @@
+# television cable channel: browse files
+# Provides: fd file listing with syntax-highlighted preview via bat
+# Usage: tv files-open
+# Keybindings:
+#   Enter     → print file path to stdout
+#   ctrl-o    → open file in $EDITOR
+#   ctrl-t    → open terminal in file's directory
+#   Esc / q   → exit
+
+[cable]
+name = "files-open"
+description = "Browse files with preview"
+
+[source]
+command = '''
+  fd -t f \
+    --exclude .git \
+    --exclude node_modules \
+    --exclude __pycache__ \
+    --exclude .venv \
+    --exclude target \
+    --exclude .cache \
+    --exclude .mypy_cache \
+    --exclude .pytest_cache \
+    --exclude .ruff_cache \
+    --exclude __snapshots__ \
+    --exclude dist \
+    --exclude build \
+    --exclude .next \
+    --exclude .nuxt \
+    . 2>/dev/null
+'''
+
+[input]
+title = " {{ cyan(foldername) }}"
+[input.format]
+fields = [
+  { name = "path", method = "raw" },
+]
+
+[preview]
+command = "bat -n --color=always --line-range :200 {path} 2>/dev/null || head -100 {path}"
+# delay = "150ms"
+
+[[keybindings]]
+key = "ctrl-o"
+action = "${EDITOR:-vi} {path} &"
+description = "Open in editor"
+
+[[keybindings]]
+key = "ctrl-t"
+action = "ghostty --working-directory=$(dirname {path}) &"
+description = "Open terminal here"

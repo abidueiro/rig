@@ -13,23 +13,135 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ── Colors (fallback if gum not yet available) ────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'
-BOLD='\033[1m'; RESET='\033[0m'
+RED='\033[0;31m'; BOLD='\033[1m'; RESET='\033[0m'
 ok()   { echo -e "  ${GREEN}✓${RESET}  $*"; }
 warn() { echo -e "  ${YELLOW}!${RESET}  $*"; }
 info() { echo -e "  ${CYAN}→${RESET}  $*"; }
+err()  { echo -e "  ${RED}✗${RESET}  $*"; }
 hdr()  { echo -e "\n${BOLD}── $* ──${RESET}"; }
 
 has() { command -v "$1" &>/dev/null; }
 
-# ── Require gum ───────────────────────────────────────────────────────────────
-if ! has gum; then
-  echo -e "\n  ${YELLOW}gum is required for this installer.${RESET}"
+# ── CLI flags ─────────────────────────────────────────────────────────────────
+MINIMAL_MODE=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --minimal) MINIMAL_MODE=true; shift ;;
+    --help|-h)
+      echo "Usage: ./install.sh [--minimal]"
+      echo ""
+      echo "  --minimal  Text-only installer (no gum required)."
+      echo "             Uses read prompts instead of TUI widgets."
+      echo "  --help     Show this message."
+      exit 0
+      ;;
+    *) shift ;;
+  esac
+done
+
+# ── Gum: try to install if missing (only in non-minimal mode) ────────────────
+if ! has gum && [[ "$MINIMAL_MODE" != true ]]; then
+  echo -e "\n  ${YELLOW}gum is not installed.${RESET}"
   echo ""
-  info "Arch/EndeavourOS:  paru -S gum"
-  info "Homebrew:          brew install gum"
-  info "Go:                go install github.com/charmbracelet/gum@latest"
+  echo "  gum provides the interactive TUI for this installer."
   echo ""
-  exit 1
+  echo "  Options:"
+  echo "    1) Attempt auto-install (requires Go or pacman/brew)"
+  echo "    2) Run in --minimal mode (text-only prompts, no TUI)"
+  echo "    3) Install gum manually and re-run"
+  echo ""
+  read -r -p "  Choice [1/2/3]: " _gum_choice
+  case "${_gum_choice:-}" in
+    1)
+      info "Attempting to install gum..."
+      if has pacman; then
+        sudo pacman -S --noconfirm gum 2>/dev/null && ok "gum installed via pacman" || \
+          { warn "pacman install failed"; }
+      elif has paru; then
+        paru -S --noconfirm gum 2>/dev/null && ok "gum installed via paru" || \
+          { warn "paru install failed"; }
+      elif has brew; then
+        brew install gum 2>/dev/null && ok "gum installed via brew" || \
+          { warn "brew install failed"; }
+      elif has go; then
+        go install github.com/charmbracelet/gum@latest 2>/dev/null && \
+          ok "gum installed via go" || { warn "go install failed"; }
+      elif has apt-get; then
+        sudo apt-get install -y gum 2>/dev/null && ok "gum installed via apt" || \
+          { warn "apt install failed"; }
+      else
+        warn "No supported package manager found. Falling back to --minimal mode."
+        MINIMAL_MODE=true
+      fi
+      ;;
+    2) MINIMAL_MODE=true ;;
+    3) info "Install gum manually (https://github.com/charmbracelet/gum) and re-run."; exit 0 ;;
+    *) MINIMAL_MODE=true ;;
+  esac
+  # Re-check after install attempt
+  if ! has gum && [[ "$MINIMAL_MODE" != true ]]; then
+    warn "gum still not available. Switching to --minimal mode."
+    MINIMAL_MODE=true
+  fi
+fi
+
+# ── Minimal-mode helpers (text-only, no gum) ──────────────────────────────────
+if [[ "$MINIMAL_MODE" == true ]]; then
+  _min_choose() {
+    local header="$1"; shift
+    local -a opts=("$@")
+    echo ""
+    echo -e "${BOLD}  $header${RESET}"
+    for _i in "${!opts[@]}"; do
+      echo "    $((_i+1))) ${opts[$_i]}"
+    done
+    local _choice
+    read -r -p "  Choice [1-${#opts[@]}]: " _choice
+    _choice="${_choice:-1}"
+    if [[ "$_choice" =~ ^[0-9]+$ ]] && (( _choice >= 1 && _choice <= ${#opts[@]} )); then
+      echo "${opts[$((_choice-1))]}"
+    fi
+  }
+  _min_confirm() {
+    local prompt="$1"; local default="${2:-true}"
+    local _yn="Y/n"
+    [[ "$default" != true ]] && _yn="y/N"
+    read -r -p "  $prompt [$_yn]: " _resp
+    if [[ "$default" == true ]]; then
+      [[ "$_resp" != "n" && "$_resp" != "N" ]] && echo true || echo false
+    else
+      [[ "$_resp" == "y" || "$_resp" == "Y" ]] && echo true || echo false
+    fi
+  }
+  _min_input() {
+    local prompt="$1"; local default="${2:-}"; local placeholder="${3:-}"
+    local _disp="$prompt"
+    [[ -n "$default" ]] && _disp="$_disp [$default]"
+    [[ -n "$placeholder" ]] && _disp="$_disp ($placeholder)"
+    read -r -p "  $_disp: " _val
+    echo "${_val:-$default}"
+  }
+  _min_multiselect() {
+    local header="$1"; shift
+    local -a items=("$@")
+    echo ""
+    echo -e "${BOLD}  $header${RESET}"
+    echo "  Enter numbers separated by spaces (e.g. 1 3 5), or 'all':"
+    for _j in "${!items[@]}"; do
+      echo "    $((_j+1))) ${items[$_j]}"
+    done
+    local _sel
+    read -r -p "  Selection: " _sel
+    if [[ "$_sel" == "all" ]]; then
+      printf '%s\n' "${items[@]}"
+    else
+      for _num in $_sel; do
+        if [[ "$_num" =~ ^[0-9]+$ ]] && (( _num >= 1 && _num <= ${#items[@]} )); then
+          echo "${items[$((_num-1))]}"
+        fi
+      done
+    fi
+  }
 fi
 
 # ask_section <header> <description> <tools...>
@@ -55,17 +167,36 @@ ask_section() {
   prompt=$(printf "%s\n  %s\n  %s" "$header" "$desc" "$tool_line")
 
   if [[ "$all_found" == true ]]; then
-    gum confirm "$prompt" && echo true || echo false
+    _confirm "$prompt" && echo true || echo false
   else
-    gum confirm --default=false "$prompt" && echo true || echo false
+    _confirm_def "$prompt" false && echo true || echo false
   fi
 }
+
+# ── Wrappers: use gum if available, else fall back to minimal helpers ──────────
+if has gum; then
+  _choose()      { gum choose --header "$1" "${@:2}"; }
+  _confirm()     { gum confirm "$1" && echo true || echo false; }
+  _confirm_def() { gum confirm ${3:+--default="$3"} "$1" && echo true || echo false; }
+  _input()       { gum input --value "${2:-}" --prompt "$1" --placeholder "${3:-}"; }
+  _multi()       { gum choose --header "$1" --no-limit "${@:2}"; }
+  _style()       { gum style "$@"; }
+  _filter()      { gum filter --header "$1" --placeholder "${2:-filter...}"; }
+else
+  _choose()      { _min_choose "$@"; }
+  _confirm()     { _min_confirm "$1" true; }
+  _confirm_def() { _min_confirm "$1" "${3:-true}"; }
+  _input()       { _min_input "$1" "${2:-}" "${3:-}"; }
+  _multi()       { _min_multiselect "$@"; }
+  _style()       { shift; echo -e "${BOLD}$*${RESET}"; }
+  _filter()      { _min_choose "$1" "${@:3}"; }
+fi
 
 
 # ── Wizard ────────────────────────────────────────────────────────────────────
 main() {
   clear
-  gum style \
+  _style \
     --border rounded --border-foreground 212 \
     --padding "1 4" --margin "1 2" \
     --bold "rig — interactive installer"
@@ -91,8 +222,8 @@ main() {
   # ══════════════════════════════════════════════════════════════════════════
   hdr "Step 1 — Shell"
   local shell_choice
-  shell_choice=$(gum choose \
-    --header "  Which shell are you using?" \
+  shell_choice=$(_choose \
+    "  Which shell are you using?" \
     "Zsh" "Bash" "Both")
   case "$shell_choice" in
     "Zsh")  install_zsh=true ;;
@@ -105,8 +236,8 @@ main() {
   # ══════════════════════════════════════════════════════════════════════════
   hdr "Step 2 — Dotfiles manager"
   local dotfiles_choice
-  dotfiles_choice=$(gum choose \
-    --header "  How do you manage dotfiles?" \
+  dotfiles_choice=$(_choose \
+    "  How do you manage dotfiles?" \
     "GNU Stow" \
     "Copy directly (no dotfiles manager)")
 
@@ -115,26 +246,26 @@ main() {
       warn "stow not found in PATH — falling back to direct copy"
     else
       use_stow=true
-      dotfiles_dir=$(gum input \
-        --value "$HOME/dotfiles" \
-        --prompt "  dotfiles dir › " \
-        --placeholder "Path to your dotfiles repository")
+      dotfiles_dir=$(_input \
+        "  dotfiles dir › " \
+        "$HOME/dotfiles" \
+        "Path to your dotfiles repository")
       [[ -z "$dotfiles_dir" ]] && dotfiles_dir="$HOME/dotfiles"
       dotfiles_dir="${dotfiles_dir/#\~/$HOME}"
 
       if [[ "$install_zsh" == true ]]; then
-        zsh_package=$(gum input \
-          --value "zsh" \
-          --prompt "  stow package for ~/.config/zsh › " \
-          --placeholder "e.g. zsh")
+        zsh_package=$(_input \
+          "  stow package for ~/.config/zsh › " \
+          "zsh" \
+          "e.g. zsh")
         [[ -z "$zsh_package" ]] && zsh_package="zsh"
       fi
 
       if [[ "$install_bash" == true ]]; then
-        bash_package=$(gum input \
-          --value "bin" \
-          --prompt "  stow package for ~/.local/bin › " \
-          --placeholder "e.g. bin or scripts")
+        bash_package=$(_input \
+          "  stow package for ~/.local/bin › " \
+          "bin" \
+          "e.g. bin or scripts")
         [[ -z "$bash_package" ]] && bash_package="bin"
       fi
     fi
@@ -173,16 +304,15 @@ main() {
   done
 
   echo ""
-  gum style --foreground 245 \
+  _style --foreground 245 \
     "  Space to toggle · Enter to confirm · Processes + Env vars always on"
   echo ""
 
   local _chosen
   _chosen=$(printf '%s\n' "${_sec_list[@]}" \
-    | gum choose --no-limit \
-        --header "  Select sections to enable" \
-        --height 20 \
-        --selected="$_preselected")
+    | _multi \
+        "  Select sections to enable" \
+        "${_sec_list[@]}")
 
   # Map selections back to booleans
   echo "$_chosen" | grep -q "Browse files"             && nav_files=true
@@ -219,11 +349,11 @@ main() {
     # ── Django log path ───────────────────────────────────────────────────
     if [[ "$dev_django" == true ]]; then
       echo ""
-      gum style --bold "  Django"
-      django_log=$(gum input \
-        --value "logs/django.log" \
-        --prompt "  log path (relative to \$PWD) › " \
-        --placeholder "logs/django.log")
+      _style --bold "  Django"
+      django_log=$(_input \
+        "  log path (relative to \$PWD) › " \
+        "logs/django.log" \
+        "logs/django.log")
       [[ -z "$django_log" ]] && django_log="logs/django.log"
       ok "Django log: $django_log"
     fi
@@ -231,11 +361,11 @@ main() {
     # ── SSH config path ───────────────────────────────────────────────────
     if [[ "$net_ssh" == true ]]; then
       echo ""
-      gum style --bold "  SSH"
-      ssh_config=$(gum input \
-        --value "$HOME/.ssh/config" \
-        --prompt "  SSH config path › " \
-        --placeholder "$HOME/.ssh/config")
+      _style --bold "  SSH"
+      ssh_config=$(_input \
+        "  SSH config path › " \
+        "$HOME/.ssh/config" \
+        "$HOME/.ssh/config")
       [[ -z "$ssh_config" ]] && ssh_config="$HOME/.ssh/config"
       ok "SSH config: $ssh_config"
     fi
@@ -243,16 +373,15 @@ main() {
     # ── Custom log files ──────────────────────────────────────────────────
     if [[ "$sys_logs" == true ]]; then
       echo ""
-      gum style --bold "  System logs — custom log files"
-      gum style --foreground 245 "  Add label + path pairs. Leave label empty to finish."
+      _style --bold "  System logs — custom log files"
+      _style --foreground 245 "  Add label + path pairs. Leave label empty to finish."
       echo ""
       while true; do
         local _lbl
-        _lbl=$(gum input --placeholder "Label (e.g. nginx error) — empty to finish" \
-          --prompt "  label › ")
+        _lbl=$(_input "  label › " "" "Label (e.g. nginx error) — empty to finish")
         [[ -z "$_lbl" ]] && break
         local _lpath
-        _lpath=$(gum input --placeholder "/var/log/..." --prompt "  path  › ")
+        _lpath=$(_input "  path  › " "" "/var/log/...")
         [[ -z "$_lpath" ]] && break
         [[ -z "$log_files" ]] && log_files="${_lbl}:${_lpath}" \
                                || log_files="${log_files}|${_lbl}:${_lpath}"
@@ -263,12 +392,12 @@ main() {
     # ── Weather cities ────────────────────────────────────────────────────
     if [[ "$tool_weather" == true ]]; then
       echo ""
-      gum style --bold "  Weather cities"
-      gum style --foreground 245 "  Quick-select cities in rig. Leave empty to always prompt manually."
+      _style --bold "  Weather cities"
+      _style --foreground 245 "  Quick-select cities in rig. Leave empty to always prompt manually."
       echo ""
       while true; do
         local _city
-        _city=$(gum input --placeholder "City name — empty to finish" --prompt "  city › ")
+        _city=$(_input "  city › " "" "City name — empty to finish")
         [[ -z "$_city" ]] && break
         [[ -z "$weather_cities" ]] && weather_cities="$_city" \
                                    || weather_cities="${weather_cities}|${_city}"
@@ -279,30 +408,30 @@ main() {
     # ── Backup ────────────────────────────────────────────────────────────
     if [[ "$sys_backup" == true ]]; then
       echo ""
-      gum style --bold "  Backup (rsync)"
+      _style --bold "  Backup (rsync)"
 
-      backup_source=$(gum input \
-        --value "$HOME" \
-        --prompt "  source dir › " \
-        --placeholder "Directory to back up")
+      backup_source=$(_input \
+        "  source dir › " \
+        "$HOME" \
+        "Directory to back up")
       [[ -z "$backup_source" ]] && backup_source="$HOME"
       ok "Source: $backup_source"
 
       echo ""
-      gum style --foreground 245 "  Add destinations — SSH host picker or manual."
-      gum style --foreground 245 "  Choose Done when finished."
+      _style --foreground 245 "  Add destinations — SSH host picker or manual."
+      _style --foreground 245 "  Choose Done when finished."
       echo ""
       while true; do
         local _dest_type
         if [[ -f "${ssh_config:-$HOME/.ssh/config}" ]]; then
-          _dest_type=$(gum choose \
-            --header "  Add backup destination" \
+          _dest_type=$(_choose \
+            "  Add backup destination" \
             "🔌  Pick SSH host from config" \
             "✏️   Type manually" \
             "✅  Done")
         else
-          _dest_type=$(gum choose \
-            --header "  Add backup destination" \
+          _dest_type=$(_choose \
+            "  Add backup destination" \
             "✏️   Type manually" \
             "✅  Done")
         fi
@@ -314,8 +443,7 @@ main() {
               | fzf --header 'Select SSH host | Esc: cancel' --height 80% --border)
             [[ -z "$_host" ]] && continue
             local _rpath
-            _rpath=$(gum input --value "/home/$USER" \
-              --prompt "  remote path › " --placeholder "Remote directory")
+            _rpath=$(_input "  remote path › " "/home/$USER" "Remote directory")
             [[ -z "$_rpath" ]] && continue
             local _dest="${_host}:${_rpath}"
             [[ -z "$backup_destinations" ]] && backup_destinations="$_dest" \
@@ -323,9 +451,8 @@ main() {
             ok "Added: $_dest" ;;
           "✏️"*)
             local _dest
-            _dest=$(gum input \
-              --placeholder "user@host:/path  or  /mnt/drive — empty to finish" \
-              --prompt "  destination › ")
+            _dest=$(_input \
+              "  destination › " "" "user@host:/path  or  /mnt/drive — empty to finish")
             [[ -z "$_dest" ]] && break
             [[ -z "$backup_destinations" ]] && backup_destinations="$_dest" \
                                             || backup_destinations="${backup_destinations}|${_dest}"
@@ -373,7 +500,7 @@ __pycache__
 .local/share/Steam
 EXCLUDES
       ok "Excludes file: $backup_excludes_file"
-      gum style --foreground 245 "  Edit it to customise what gets excluded."
+      _style --foreground 245 "  Edit it to customise what gets excluded."
     fi
   fi
 
@@ -472,11 +599,10 @@ EOF
       ok ".zshrc already sources rig.zsh"
     else
       echo ""
-      gum style --foreground 245 "  Add to ~/.zshrc:"
-      gum style --foreground 212 "  $zsh_src"
+      _style --foreground 245 "  Add to ~/.zshrc:"
+      _style --foreground 212 "  $zsh_src"
       echo ""
-      if gum confirm "Add source line to ~/.zshrc?
-  $zsh_src"; then
+      if _confirm "Add source line to ~/.zshrc?"; then
         echo "$zsh_src" >> "$HOME/.zshrc"
         ok "Added to ~/.zshrc"
       fi
@@ -512,11 +638,10 @@ EOF
       ok ".bashrc already sources rig"
     else
       echo ""
-      gum style --foreground 245 "  For cd to work in bash, add to ~/.bashrc:"
-      gum style --foreground 212 "  $bash_src"
+      _style --foreground 245 "  For cd to work in bash, add to ~/.bashrc:"
+      _style --foreground 212 "  $bash_src"
       echo ""
-      if gum confirm "Add source line to ~/.bashrc?
-  $bash_src"; then
+      if _confirm "Add source line to ~/.bashrc?"; then
         echo "$bash_src" >> "$HOME/.bashrc"
         ok "Added to ~/.bashrc"
       fi
@@ -534,7 +659,7 @@ EOF
 
   # ── Done ─────────────────────────────────────────────────────────────────
   echo ""
-  gum style \
+  _style \
     --border rounded --border-foreground 82 \
     --padding "1 4" --margin "1 2" \
     --bold "✓ rig installed"

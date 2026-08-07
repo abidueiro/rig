@@ -16,6 +16,31 @@
 
 rig() {
 
+  # ── CLI flags ────────────────────────────────────────────────────────────
+  if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    echo "rig — Terminal Resource Interactive Guide (bash version)"
+    echo ""
+    echo "Usage:  . rig       (source to enable cd in parent shell)"
+    echo "        rig         (if aliased)"
+    echo "        rig --help | --version"
+    echo ""
+    echo "  A TUI launcher for dev, sysadmin, and navigation tasks."
+    echo "  Type to filter: nav, dev, sys, net, tool."
+    echo ""
+    echo "  --help     Show this message"
+    echo "  --version  Show version"
+    echo ""
+    echo "For cd to work in parent shell, add to ~/.bashrc:"
+    echo "  source ~/.local/bin/rig"
+    echo ""
+    echo "Dependencies: gum (required), fzf, bat, fd, rg (recommended)"
+    return 0
+  fi
+  if [[ "${1:-}" == "--version" || "${1:-}" == "-V" ]]; then
+    echo "rig v1.1.0"
+    return 0
+  fi
+
   # ── Ctrl+C → clean exit ───────────────────────────────────────────────────
   trap 'trap - INT; return 0' INT
 

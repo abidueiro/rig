@@ -1,0 +1,46 @@
+# television cable channel: git modified files
+# Provides: interactive modified/untracked files with diff preview
+# Usage: tv git-modified
+
+[cable]
+name = "git-modified"
+description = "Git modified files browser"
+
+[source]
+command = '''
+  git status --short 2>/dev/null \
+    | awk '{printf "%s\t%s\n", $1, $2}'
+'''
+
+[input]
+title = " {{ cyan(foldername) }}  {{ . | 1 | yellow }}"
+[input.format]
+fields = [
+  { name = "status", method = "split", delimiter = "\t", position = 0 },
+  { name = "file",   method = "split", delimiter = "\t", position = 1 },
+]
+
+[preview]
+command = '''
+  case "{status}" in
+    "??") bat --color=always {file} 2>/dev/null | head -80 ;;
+    "D")  echo "File deleted: {file}" ;;
+    *)    git diff --color=always -- {file} 2>/dev/null | head -80 ;;
+  esac
+'''
+# delay = "150ms"
+
+[[keybindings]]
+key = "enter"
+action = "git diff --color=always -- {file} | less -R"
+description = "View diff"
+
+[[keybindings]]
+key = "ctrl-s"
+action = "git add {file} && echo '✓ Staged {file}' || echo '✗ Failed'"
+description = "Stage"
+
+[[keybindings]]
+key = "ctrl-r"
+action = "git checkout -- {file} && echo '✓ Reverted {file}' || echo '✗ Failed'"
+description = "Revert"

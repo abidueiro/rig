@@ -1,0 +1,42 @@
+# television cable channel: git branches
+# Provides: interactive branch browser with checkout
+# Usage: tv git-branches
+
+[cable]
+name = "git-branches"
+description = "Git branches browser"
+
+[source]
+command = '''
+  git branch -a --color=never \
+    | sed 's/^[* ]*//' \
+    | sed 's/remotes\/origin\///' \
+    | grep -v 'HEAD' \
+    | sort -u 2>/dev/null
+'''
+
+[input]
+title = " {{ cyan(foldername) }}  {{ . | 1 | yellow }}"
+[input.format]
+fields = [
+  { name = "branch", method = "raw" },
+]
+
+[preview]
+command = "git log --oneline --color=always -15 {branch} 2>/dev/null"
+# delay = "150ms"
+
+[[keybindings]]
+key = "enter"
+action = "git checkout {branch} 2>/dev/null && echo '✓ Switched to {branch}' || echo '✗ Could not switch'"
+description = "Checkout"
+
+[[keybindings]]
+key = "ctrl-d"
+action = "git branch -d {branch} 2>/dev/null && echo '✓ Deleted {branch}' || echo '✗ Could not delete (maybe current?)'"
+description = "Delete local"
+
+[[keybindings]]
+key = "ctrl-m"
+action = "git merge {branch} && echo '✓ Merged {branch}' || echo '✗ Merge failed'"
+description = "Merge into current"

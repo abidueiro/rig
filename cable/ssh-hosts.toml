@@ -1,0 +1,40 @@
+# television cable channel: SSH hosts
+# Parses ~/.ssh/config and shows hosts with preview of their configuration
+# Usage: tv ssh-hosts
+
+[cable]
+name = "ssh-hosts"
+description = "SSH hosts with config preview"
+
+[source]
+command = '''
+  awk '/^Host / {
+    for (i=2; i<=NF; i++) {
+      if ($i !~ /[*?]/) print $i
+    }
+  }' "${HOME}/.ssh/config" 2>/dev/null
+'''
+
+[input]
+title = " {{ cyan(foldername) }}  {{ . | 1 | yellow }}"
+[input.format]
+fields = [
+  { name = "host", method = "raw" },
+]
+
+[preview]
+command = '''
+  grep -A 15 "^Host {host}$" "${HOME}/.ssh/config" 2>/dev/null \
+    | bat -l sshconfig --color=always --line-range :20 \
+    || echo "No config found for {host}"
+'''
+
+[[keybindings]]
+key = "enter"
+action = "ssh {host}"
+description = "Connect"
+
+[[keybindings]]
+key = "ctrl-t"
+action = "tmux new-window -n '{host}' 'ssh {host}'"
+description = "Open in tmux"
