@@ -177,7 +177,7 @@ ask_section() {
 if has gum; then
   _choose()      { gum choose --header "$1" "${@:2}"; }
   _confirm()     { gum confirm "$1" && echo true || echo false; }
-  _confirm_def() { gum confirm ${3:+--default="$3"} "$1" && echo true || echo false; }
+  _confirm_def() { gum confirm ${2:+--default="$2"} "$1" && echo true || echo false; }
   _input()       { gum input --value "${2:-}" --prompt "$1" --placeholder "${3:-}"; }
   _multi()       { gum choose --header "$1" --no-limit "${@:2}"; }
   _style()       { gum style "$@"; }
@@ -185,7 +185,7 @@ if has gum; then
 else
   _choose()      { _min_choose "$@"; }
   _confirm()     { _min_confirm "$1" true; }
-  _confirm_def() { _min_confirm "$1" "${3:-true}"; }
+  _confirm_def() { _min_confirm "$1" "${2:-true}"; }
   _input()       { _min_input "$1" "${2:-}" "${3:-}"; }
   _multi()       { _min_multiselect "$@"; }
   _style()       { shift; echo -e "${BOLD}$*${RESET}"; }
