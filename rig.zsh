@@ -188,6 +188,9 @@ function rig() {
       docker_action=$(gum choose \
         --header "  Docker  (Esc: back)" \
         "🐳  lazydocker (full TUI)" \
+        "🌍  lazydocker en un servidor (lzd)" \
+        "📜  Logs de contenedor en lnav, local o servidor (dlog)" \
+        "🐚  Shell en contenedor, local o servidor (dsh)" \
         "📋  Containers (inspect / logs / shell / restart / stop)" \
         "📦  Images" \
         "🌐  Networks" \
@@ -196,6 +199,9 @@ function rig() {
       [[ -z "$docker_action" ]] && continue
       case "$docker_action" in
         "🐳  lazydocker"*)   lazydocker ;;
+        "🌍  lazydocker en"*) lzd ;;
+        "📜  Logs de contenedor"*) dlog ;;
+        "🐚  Shell en contenedor"*) dsh ;;
         "📋  Containers"*)   tv docker-all ;;
         "📦  Images")
           docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.ID}}' | tv ;;
@@ -1432,4 +1438,4 @@ function _rig_widget() {
   zle reset-prompt
 }
 zle -N _rig_widget
-bindkey '^ ' _rig_widget    # Ctrl+Space
+bindkey '^[r' _rig_widget    # Alt+r  (Ctrl+Space es el prefix de tmux)
