@@ -72,9 +72,9 @@ main() {
 
   # ── Collected values (defaults) ──────────────────────────────────────────
   local nav_files=false nav_dirs=false nav_dirs_zoxide=false nav_text=false
-  local dev_docker=false dev_django=false dev_python=false dev_git=false
+  local dev_docker=false dev_django=false dev_python=false dev_git=false dev_tmux=false
   local sys_logs=false sys_systemd=false sys_procs=true sys_backup=false
-  local net_ports=false net_ssh=false net_wg=false
+  local net_ports=false net_ssh=false net_wg=false use_sshub=false
   local tool_cheat=false tool_env=true tool_weather=false
 
   local django_log="logs/django.log"
@@ -145,31 +145,46 @@ main() {
   # ══════════════════════════════════════════════════════════════════════════
   hdr "Step 3 — Sections"
 
-  # Helper: inline tool badge
-  _b() { has "$1" && printf "✓ %s" "$1" || printf "✗ %s" "$1"; }
+  # Helper: short status badge
+  _b() { has "$1" && printf "✓" || printf "✗"; }
+  # Helper: section line — fixed-width, no emojis (avoids terminal width issues)
+  # format: "[cat]  Label                   status"
+  _sec() {
+    local cat="$1" label="$2"; shift 2
+    local status=""
+    local ok=true
+    for t in "$@"; do
+      has "$t" && status+="✓$t " || { status+="✗$t "; ok=false; }
+    done
+    printf "%-8s %-30s %s" "[$cat]" "$label" "$status"
+  }
 
   local -a _sec_list=(
-    "[nav]   📁  Browse files                  · $(_b fd) $(_b bat)"
-    "[nav]   📂  Browse directories (cd)       · $(_b fd) $(_b fzf)"
-    "[nav]   🔍  Search file contents           · $(_b rg) $(_b fzf)"
-    "[dev]   🐋  Docker                         · $(_b docker)"
-    "[dev]   🐍  Django (current project)       · log path configurable"
-    "[dev]   🐍  Python venvs / uv              · $(_b python3)"
-    "[dev]   🔀  Git                            · $(_b git)"
-    "[sys]   📋  System logs                    · $(_b journalctl)"
-    "[sys]   ⚙️   Systemd services               · $(_b systemctl)"
-    "[sys]   💾  Backup (rsync)                 · $(_b rsync)"
-    "[net]   🖧   Ports / Connections             · $(_b ss)"
-    "[net]   🔌  SSH                             · $(_b ssh)"
-    "[net]   🔒  WireGuard                      · $(_b wgs)"
-    "[tool]  📖  Cheat sheets (cht.sh)          · $(_b curl)"
-    "[tool]  🌤️   Weather (wttr.in)              · $(_b curl)"
+    "$(_sec nav  "Browse files"            fd bat)"
+    "$(_sec nav  "Browse directories (cd)" fd fzf)"
+    "$(_sec nav  "Search file contents"    rg fzf)"
+    "$(_sec dev  "Docker"                  docker)"
+    "$(_sec dev  "Django (current project)" )"
+    "$(_sec dev  "Python venvs / uv"       python3)"
+    "$(_sec dev  "Git"                     git)"
+    "$(_sec dev  "Tmux / Sesh"             sesh tmux)"
+    "$(_sec sys  "System logs"             journalctl)"
+    "$(_sec sys  "Systemd services"        systemctl)"
+    "$(_sec sys  "Backup (rsync)"          rsync)"
+    "$(_sec net  "Ports / Connections"     ss)"
+    "$(_sec net  "SSH"                     ssh)"
+    "$(_sec net  "WireGuard"               wgs)"
+    "$(_sec tool "Cheat sheets (cht.sh)"   curl)"
+    "$(_sec tool "Weather (wttr.in)"       curl)"
   )
 
-  # Pre-select entries where all required tools are present (no ✗)
+  # Pre-select entries where all required tools present (no ✗ in line)
   local _preselected=""
   for _s in "${_sec_list[@]}"; do
-    [[ "$_s" != *"✗"* ]] && _preselected+="${_s},"
+    # Django has no tools (always selectable), others check for ✗
+    if [[ "$_s" == *"Django"* ]] || [[ "$_s" != *"✗"* ]]; then
+      _preselected+="${_s},"
+    fi
   done
 
   echo ""
@@ -191,15 +206,23 @@ main() {
   echo "$_chosen" | grep -q "Docker"                   && dev_docker=true
   echo "$_chosen" | grep -q "Django"                   && dev_django=true
   echo "$_chosen" | grep -q "Python venvs"             && dev_python=true
-  echo "$_chosen" | grep -q "Git"                      && dev_git=true
+  echo "$_chosen" | grep -qw "Git"                     && dev_git=true
+  echo "$_chosen" | grep -q "Tmux"                     && dev_tmux=true
   echo "$_chosen" | grep -q "System logs"              && sys_logs=true
-  echo "$_chosen" | grep -q "Systemd services"         && sys_systemd=true
+  echo "$_chosen" | grep -q "Systemd"                  && sys_systemd=true
   echo "$_chosen" | grep -q "Backup"                   && sys_backup=true
   echo "$_chosen" | grep -q "Ports"                    && net_ports=true
-  echo "$_chosen" | grep -q "SSH"                      && net_ssh=true
+  echo "$_chosen" | grep -qw "SSH"                     && net_ssh=true
   echo "$_chosen" | grep -q "WireGuard"                && net_wg=true
   echo "$_chosen" | grep -q "Cheat sheets"             && tool_cheat=true
   echo "$_chosen" | grep -q "Weather"                  && tool_weather=true
+
+  # sshub integration (optional SSH host manager)
+  if [[ "$net_ssh" == true ]] && has sshub; then
+    if gum confirm "Use sshub as the SSH host manager (hosts, tunnels, sftp)?"; then
+      use_sshub=true
+    fi
+  fi
 
   # zoxide sub-option only if dirs enabled
   if [[ "$nav_dirs" == true ]] && has zoxide; then
@@ -232,6 +255,9 @@ main() {
     if [[ "$net_ssh" == true ]]; then
       echo ""
       gum style --bold "  SSH"
+      if [[ "$use_sshub" == true ]]; then
+        gum style --foreground 245 "  sshub detected — rig will use sshub for host management."
+      fi
       ssh_config=$(gum input \
         --value "$HOME/.ssh/config" \
         --prompt "  SSH config path › " \
@@ -334,46 +360,111 @@ main() {
         esac
       done
 
-      backup_excludes_file="$CONF_DIR/rsync-excludes.txt"
-      mkdir -p "$CONF_DIR"
-      cat > "$backup_excludes_file" << 'EXCLUDES'
+      backup_excludes_file="$HOME/rsync_exclude.txt"
+      echo ""
+      gum style --bold "  Rsync excludes file"
+
+      # Ask where the excludes file should live
+      local _excl_choice
+      _excl_choice=$(gum choose \
+        --header "  Excludes file — what do you want to do?" \
+        "Generate at ~/rsync_exclude.txt (recommended)" \
+        "Use existing file (enter path)" \
+        "Skip — no excludes file")
+
+      case "$_excl_choice" in
+        "Generate"*)
+          backup_excludes_file="$HOME/rsync_exclude.txt"
+          # Copy from script dir if available, otherwise generate inline
+          if [[ -f "$SCRIPT_DIR/rsync_exclude.txt" ]]; then
+            cp "$SCRIPT_DIR/rsync_exclude.txt" "$backup_excludes_file"
+          else
+            cat > "$backup_excludes_file" << 'EXCLUDES'
+# rsync exclude file for rig backup
+# Edit this file to customise what gets excluded.
+
+# System caches
 .cache
 .local/share/Trash
-.local/share/flatpak
-.local/share/containers
-.local/share/virtualenv
-.local/share/virtualenvs
-.local/share/man
 .local/share/gvfs-metadata
+
+# Desktop / Graphics
 .local/share/vulkan
 .local/share/gstreamer-1.0
-.local/share/uv
-.local/share/pipx
+
+# Flatpak & containers
+.local/share/flatpak
+.local/share/containers
+.docker
+
+# Browser caches
 .mozilla/firefox/*/Cache
 .config/chromium/Default/Cache
-node_modules
-.npm
-.gradle
+
+# Gaming
+.steam
+.local/share/Steam
+
+# Python
+.local/share/virtualenv
+.local/share/virtualenvs
+.local/share/uv
+.local/share/pipx
 __pycache__
 .mypy_cache
 .venv
 .pytest_cache
+.pyenv
+
+# Node / JS
+node_modules
+.npm
+.bun
+
+# Rust
 .cargo
 .rustup
-.m2
-.pyenv
-.bun
-.android
-.vcpkg
+
+# Go
 /go
-.docker
+
+# Java / Android
+.gradle
+.m2
+.android
+
+# C/C++
+.vcpkg
+
+# Zsh compiled files
 .zcompdump*
 *.zwc
-.steam
-.local/share/Steam
+
+# Docs (regeneratable)
+.local/share/man
 EXCLUDES
-      ok "Excludes file: $backup_excludes_file"
-      gum style --foreground 245 "  Edit it to customise what gets excluded."
+          fi
+          ok "Generated: $backup_excludes_file"
+          gum style --foreground 245 "  Edit ~/rsync_exclude.txt to customise exclusions."
+          ;;
+        "Use existing"*)
+          backup_excludes_file=$(gum input \
+            --value "$HOME/rsync_exclude.txt" \
+            --prompt "  excludes file path › " \
+            --placeholder "Absolute path to excludes file")
+          [[ -z "$backup_excludes_file" ]] && backup_excludes_file="$HOME/rsync_exclude.txt"
+          backup_excludes_file="${backup_excludes_file/#\~/$HOME}"
+          if [[ -f "$backup_excludes_file" ]]; then
+            ok "Using: $backup_excludes_file"
+          else
+            warn "File not found: $backup_excludes_file — will be skipped at runtime"
+          fi
+          ;;
+        "Skip"*)
+          backup_excludes_file=""
+          warn "No excludes file — all files in source will be backed up"
+          ;;
+      esac
     fi
   fi
 
@@ -399,6 +490,8 @@ RIG_DEV_DOCKER=${dev_docker}
 RIG_DEV_DJANGO=${dev_django}
 RIG_DEV_PYTHON=${dev_python}
 RIG_DEV_GIT=${dev_git}
+RIG_DEV_TMUX=${dev_tmux}
+RIG_TEMPLATES_DIR="${XDG_CONFIG_HOME:-\$HOME/.config}/rig/templates"
 
 # ── [sys] System ──────────────────────────────────────────────────────────────
 RIG_SYS_LOGS=${sys_logs}
@@ -420,6 +513,9 @@ RIG_TOOL_WEATHER=${tool_weather}
 RIG_DJANGO_LOG="${django_log}"
 RIG_SSH_CONFIG="${ssh_config}"
 
+# ── SSH host manager ─────────────────────────────────────────────────────────
+RIG_USE_SSHUB=${use_sshub}
+
 # ── Custom log files ──────────────────────────────────────────────────────────
 # Format: "label:path|label:path"
 RIG_LOG_FILES="${log_files}"
@@ -432,6 +528,10 @@ RIG_WEATHER_CITIES="${weather_cities}"
 RIG_BACKUP_SOURCE="${backup_source}"
 RIG_BACKUP_DESTINATIONS="${backup_destinations}"
 RIG_BACKUP_EXCLUDES_FILE="${backup_excludes_file}"
+
+# ── Hosts ─────────────────────────────────────────────────────────────────────
+# Saved rig hosts file (name|user|host|port|description)
+RIG_HOSTS_FILE="${XDG_CONFIG_HOME:-\$HOME/.config}/rig/hosts.conf"
 EOF
 
   ok "rig.conf written to $CONF_FILE"
@@ -532,6 +632,46 @@ EOF
     tv update-channels 2>/dev/null && ok "tv update-channels" || true
   fi
 
+  # ── workflow templates ────────────────────────────────────────────────────
+  local tpl_dir="${XDG_CONFIG_HOME:-$HOME/.config}/rig/templates"
+  mkdir -p "$tpl_dir"
+  local _tpl_copied=0
+  # Look for templates in $SCRIPT_DIR/templates/ subdirectory
+  if [[ -d "$SCRIPT_DIR/templates" ]]; then
+    cp "$SCRIPT_DIR/templates/"*.sh "$tpl_dir/" 2>/dev/null && _tpl_copied=1
+  fi
+  # Also check root of script dir (in case templates are not in a subdir)
+  for _f in "$SCRIPT_DIR/django-dev.sh" "$SCRIPT_DIR/generic-dev.sh"; do
+    [[ -f "$_f" ]] && { cp "$_f" "$tpl_dir/"; _tpl_copied=1; }
+  done
+  if [[ "$_tpl_copied" -eq 1 ]]; then
+    chmod +x "$tpl_dir/"*.sh 2>/dev/null
+    ok "Templates → $tpl_dir"
+  else
+    warn "No templates found in $SCRIPT_DIR — copy .sh files to $tpl_dir/ manually"
+  fi
+  gum style --foreground 245 "  Add custom templates as .sh files in $tpl_dir/"
+  gum style --foreground 245 "  Or place them in .rig/ inside any project directory."
+
+  # ── Source shell rc files ─────────────────────────────────────────────────
+  echo ""
+  hdr "Reloading shell"
+  if [[ "$install_zsh" == true && -f "$HOME/.zshrc" ]]; then
+    if gum confirm "Reload ~/.zshrc now? (runs: source ~/.zshrc)"; then
+      # We can't source from inside a script (different process), so write a
+      # helper that the user can run, and print the command clearly
+      gum style --foreground 212 "  Run this in your current terminal:"
+      gum style --foreground 82  "    source ~/.zshrc"
+      gum style --foreground 245 "  (install.sh runs in a subshell — it cannot reload your shell for you)"
+    fi
+  fi
+  if [[ "$install_bash" == true && -f "$HOME/.bashrc" ]]; then
+    if gum confirm "Reload ~/.bashrc now? (runs: source ~/.bashrc)"; then
+      gum style --foreground 212 "  Run this in your current terminal:"
+      gum style --foreground 82  "    source ~/.bashrc"
+    fi
+  fi
+
   # ── Done ─────────────────────────────────────────────────────────────────
   echo ""
   gum style \
@@ -543,6 +683,11 @@ EOF
   [[ "$install_zsh"  == true ]] && info "Keybinding:  Ctrl+Space (from any zsh prompt)"
   [[ "$install_bash" == true ]] && info "Bash cd:     source ~/.local/bin/rig"
   info "Reconfigure: ./install.sh"
+  echo ""
+  echo ""
+  gum style --foreground 214 --bold "  → Don't forget to reload your shell:"
+  [[ "$install_zsh"  == true ]] && gum style --foreground 82 "    source ~/.zshrc"
+  [[ "$install_bash" == true ]] && gum style --foreground 82 "    source ~/.bashrc"
   echo ""
 }
 

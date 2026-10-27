@@ -1,0 +1,17 @@
+- ssh tunnel vpn poor man, sshfs, ssh tunnel, ssh remeto apps. opcions per llistar els configurats sborrar, editar i crear nous
+- backup rsync al menu opcions per llistar els que ho ha configurats esborrar i aafegir
+- falta versio sh o ho fa el install ?
+- falta source i stow o ho fa el install ?
+- randomize mac
+- docker apps: firefox, etc
+- nmap port range
+- tor ?
+- oneliners
+- encrytion before backup
+- encrypt files
+- tomb
+- espai dedisc
+- arch mainteinance o detect distro to optimize
+- prompt_optimizer
+- sandbox/firejail app and launch opencode, chromium, etc
++ sshub integration for SSH host management (done)

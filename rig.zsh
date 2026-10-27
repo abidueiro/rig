@@ -25,13 +25,17 @@ function rig() {
     # Defaults: everything enabled when no config file is present
     RIG_NAV_FILES=true; RIG_NAV_DIRS=true; RIG_NAV_DIRS_ZOXIDE=true; RIG_NAV_TEXT=true
     RIG_DEV_DOCKER=true; RIG_DEV_DJANGO=true; RIG_DEV_PYTHON=true; RIG_DEV_GIT=true
+    RIG_DEV_TMUX=true
     RIG_SYS_LOGS=true; RIG_SYS_SYSTEMD=true; RIG_SYS_PROCS=true; RIG_SYS_BACKUP=false
     RIG_NET_PORTS=true; RIG_NET_SSH=true; RIG_NET_WG=true
     RIG_TOOL_CHEAT=true; RIG_TOOL_ENV=true; RIG_TOOL_WEATHER=true
     RIG_DJANGO_LOG="logs/django.log"
     RIG_BACKUP_SOURCE="$HOME"
     RIG_BACKUP_DESTINATIONS=""
-    RIG_BACKUP_EXCLUDES_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/rig/rsync-excludes.txt"
+    RIG_BACKUP_EXCLUDES_FILE="$HOME/rsync_exclude.txt"
+    RIG_HOSTS_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/rig/hosts.conf"
+    RIG_TEMPLATES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/rig/templates"
+    RIG_USE_SSHUB=true
   fi
 
   # ── gum colors / styles ───────────────────────────────────────────────────
@@ -48,16 +52,17 @@ function rig() {
   [[ "$RIG_DEV_DJANGO"   == true ]] && _menu+=("[dev]   🐍  Django (current project)")
   [[ "$RIG_DEV_PYTHON"   == true ]] && _menu+=("[dev]   🐍  Python venvs / uv")
   [[ "$RIG_DEV_GIT"      == true ]] && _menu+=("[dev]   🔀  Git")
+  [[ "$RIG_DEV_TMUX"     == true ]] && _menu+=("[dev]   🪟  Tmux / Sesh")
   [[ "$RIG_SYS_LOGS"     == true ]] && _menu+=("[sys]   📋  System logs")
-  [[ "$RIG_SYS_SYSTEMD"  == true ]] && _menu+=("[sys]   ⚙️   Systemd services")
-  [[ "$RIG_SYS_PROCS"    == true ]] && _menu+=("[sys]   🖥️   Processes")
+  [[ "$RIG_SYS_SYSTEMD"  == true ]] && _menu+=("[sys]   🔩  Systemd services")
+  [[ "$RIG_SYS_PROCS"    == true ]] && _menu+=("[sys]   📊  Processes")
   [[ "$RIG_SYS_BACKUP"   == true ]] && _menu+=("[sys]   💾  Backup (rsync)")
-  [[ "$RIG_NET_PORTS"    == true ]] && _menu+=("[net]   🖧   Ports / Connections")
+  [[ "$RIG_NET_PORTS"    == true ]] && _menu+=("[net]   📡  Ports / Connections")
   [[ "$RIG_NET_SSH"      == true ]] && _menu+=("[net]   🔌  SSH")
   [[ "$RIG_NET_WG"       == true ]] && _menu+=("[net]   🔒  WireGuard (wgs)")
   [[ "$RIG_TOOL_CHEAT"   == true ]] && _menu+=("[tool]  📖  Cheat sheets")
   [[ "$RIG_TOOL_ENV"     == true ]] && _menu+=("[tool]  🌿  Environment variables")
-  [[ "$RIG_TOOL_WEATHER" == true ]] && _menu+=("[tool]  🌤️   Weather (wttr.in)")
+  [[ "$RIG_TOOL_WEATHER" == true ]] && _menu+=("[tool]  🌤  Weather (wttr.in)")
   _menu+=("[quit]  ❌  Quit")
 
   # ── Main loop ─────────────────────────────────────────────────────────────
@@ -461,6 +466,26 @@ function rig() {
       esac
       ;;
 
+    # ── Tmux / Sesh ─────────────────────────────────────────────
+    *"Tmux / Sesh")
+      while true; do
+        local tmux_action
+        tmux_action=$(gum choose \
+          --header "  Tmux / Sesh  (Esc: back to main)" \
+          "🔗  Connect to session" \
+          "➕  New session" \
+          "🗑️  Kill session" \
+          "🚀  Launch workflow template")
+        [[ -z "$tmux_action" ]] && break
+        case "$tmux_action" in
+          *"Connect"*)   _rig_tmux_connect ;;
+          *"New"*)       _rig_tmux_new ;;
+          *"Kill"*)      _rig_tmux_kill ;;
+          *"template"*)  _rig_tmux_template ;;
+        esac
+      done
+      ;;
+
     # ── Processes ───────────────────────────────────────────────
     *"Processes")
       while true; do
@@ -527,20 +552,28 @@ function rig() {
     *"SSH")
       while true; do
         local ssh_action
+        local -a _ssh_menu=(
+          "🔌  Connect to host"
+          "📁  Mount filesystem (sshfs)"
+          "🌐  SOCKS proxy tunnel"
+          "🔀  Port forward tunnel"
+          "🖥️   Run remote app (X11)"
+          "📋  Manage saved hosts"
+        )
+        [[ "$RIG_USE_SSHUB" == true ]] && _rig_sshub_available && \
+          _ssh_menu=("🚀  Open sshub TUI" "${_ssh_menu[@]}")
         ssh_action=$(gum choose \
           --header "  SSH  (Esc: back to main)" \
-          "🔌  Connect to host" \
-          "📁  Mount filesystem (sshfs)" \
-          "🌐  SOCKS proxy tunnel" \
-          "🔀  Port forward tunnel" \
-          "🖥️   Run remote app (X11/Wayland)")
+          "${_ssh_menu[@]}")
         [[ -z "$ssh_action" ]] && break
         case "$ssh_action" in
+          *"Open sshub"*)   sshub ;;
           *"Connect"*)      _rig_ssh_connect ;;
           *"Mount"*)        _rig_ssh_sshfs ;;
           *"SOCKS"*)        _rig_ssh_socks ;;
           *"Port forward"*) _rig_ssh_tunnel ;;
           *"remote app"*)   _rig_ssh_remote_app ;;
+          *"Manage saved"*) _rig_hosts_manage ;;
         esac
       done
       ;;
@@ -549,24 +582,26 @@ function rig() {
     *"Backup (rsync)")
       local _backup_src="${RIG_BACKUP_SOURCE:-$HOME}"
       local _excludes="${RIG_BACKUP_EXCLUDES_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/rig/rsync-excludes.txt}"
-      local _ssh_cfg="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
 
-      # Build destination list from conf + optional SSH picker entry
+      # Build destination list: saved hosts + configured destinations + ad-hoc picker
       local _dest_list=()
+      # Saved rig hosts
+      local _hf="${RIG_HOSTS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/rig/hosts.conf}"
+      if [[ -f "$_hf" ]]; then
+        while IFS='|' read -r _n _u _h _p _d || [[ -n "$_n" ]]; do
+          [[ "$_n" == \#* || -z "$_n" ]] && continue
+          _dest_list+=("[saved] ${_n}  ${_u}@${_h}:${_p}  — ${_d}")
+        done < "$_hf"
+      fi
+      # Pre-configured destinations from rig.conf
       if [[ -n "${RIG_BACKUP_DESTINATIONS:-}" ]]; then
         local IFS='|'
         for _d in $RIG_BACKUP_DESTINATIONS; do
-          _dest_list+=("$_d")
+          _dest_list+=("[conf]  $_d")
         done
         unset IFS
       fi
-      # If SSH config exists, always offer ad-hoc SSH destination
-      [[ -f "$_ssh_cfg" ]] && _dest_list+=("🔌  Pick SSH host from config...")
-
-      if [[ ${#_dest_list[@]} -eq 0 ]]; then
-        gum style --foreground 196 "  No backup destinations configured. Run install.sh."
-        sleep 3; continue
-      fi
+      _dest_list+=("🔌  Pick any SSH host...")
 
       local backup_action
       backup_action=$(gum choose \
@@ -578,26 +613,54 @@ function rig() {
 
       if [[ "$backup_action" == "📋"* ]]; then
         local _log_file="$HOME/.local/share/rig/backup.log"
-        if [[ -f "$_log_file" ]]; then less -R "$_log_file"
-        else gum style --foreground 196 "  No backup log yet."; sleep 2
-        fi
+        [[ -f "$_log_file" ]] && less -R "$_log_file" \
+          || { gum style --foreground 196 "  No backup log yet."; sleep 2; }
         continue
       fi
 
       # Select destination
-      local dest=""
-      if [[ ${#_dest_list[@]} -eq 1 ]]; then
-        dest="${_dest_list[0]}"
-      else
-        dest=$(printf '%s\n' "${_dest_list[@]}" \
-          | gum filter --header "  Select destination  (Esc: back)" --placeholder "filter...")
-        [[ -z "$dest" ]] && continue
-      fi
+      local dest_raw dest=""
+      dest_raw=$(printf '%s\n' "${_dest_list[@]}" \
+        | gum filter --header "  Select destination  (Esc: back)" --placeholder "filter...")
+      [[ -z "$dest_raw" ]] && continue
 
-      # SSH config picker for ad-hoc destination
-      if [[ "$dest" == "🔌"* ]]; then
-        dest=$(_rig_backup_pick_ssh_dest)
-        [[ -z "$dest" ]] && continue
+      if [[ "$dest_raw" == "🔌"* ]]; then
+        # Ad-hoc SSH host picker using unified picker
+        local _picked
+        _picked=$(_rig_hosts_pick "Select SSH host for backup")
+        [[ -z "$_picked" ]] && continue
+        # Parse: type|name|user|host|port
+        local _type _name _user _host _port
+        IFS='|' read -r _type _name _user _host _port <<< "$_picked"
+        if [[ "$_type" == "sshub" ]]; then
+          local _resolved
+          _resolved=$(_rig_sshub_resolve "$_name")
+          IFS='|' read -r _user _host _port <<< "$_resolved"
+        fi
+        local _rpath
+        _rpath=$(gum input --value "/home/$USER" \
+          --prompt "  remote backup path › " --placeholder "Remote directory")
+        [[ -z "$_rpath" ]] && continue
+        dest="${_user}@${_host}:${_rpath}"
+        [[ "$_port" != "22" ]] && \
+          gum style --foreground 245 "  Note: non-standard port $_port — rsync uses default SSH. Add to ~/.ssh/config for custom ports."
+      elif [[ "$dest_raw" == "[saved]"* ]]; then
+        # Saved rig host — parse name to get connection details
+        local _sname
+        _sname=$(echo "$dest_raw" | awk '{print $2}')
+        local _su _sh _sp
+        while IFS='|' read -r _n _u _h _p _d || [[ -n "$_n" ]]; do
+          [[ "$_n" == \#* || -z "$_n" ]] && continue
+          if [[ "$_n" == "$_sname" ]]; then _su="$_u" _sh="$_h" _sp="$_p"; break; fi
+        done < "$_hf"
+        local _rpath
+        _rpath=$(gum input --value "/home/$_su" \
+          --prompt "  remote backup path › " --placeholder "Remote directory")
+        [[ -z "$_rpath" ]] && continue
+        dest="${_su}@${_sh}:${_rpath}"
+      else
+        # [conf] destination — strip prefix
+        dest="${dest_raw#\[conf\]  }"
       fi
 
       local -a _rsync_opts=(-aAXh --progress)
@@ -619,8 +682,7 @@ function rig() {
         rsync "${_rsync_opts[@]}" "$_backup_src/" "$dest/"
       fi
       echo ""
-      gum style --foreground 82 "  ✓ Done"
-      sleep 2
+      gum style --foreground 82 "  ✓ Done"; sleep 2
       ;;
     # ── WireGuard ───────────────────────────────────────────────
     *"WireGuard"*)
@@ -690,41 +752,299 @@ function rig() {
   trap - INT
 }
 
-# ── Helper: SSH — connect ─────────────────────────────────────────────────────
-function _rig_ssh_connect() {
-  tv ssh-hosts
+# =============================================================================
+# Hosts management helpers
+# hosts.conf format (one per line):  name|user|host|port|description
+# =============================================================================
+
+# ── Return path to hosts file, creating it if missing ────────────────────────
+function _rig_hosts_file() {
+  local hf="${RIG_HOSTS_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/rig/hosts.conf}"
+  mkdir -p "$(dirname "$hf")"
+  [[ ! -f "$hf" ]] && printf '# rig saved hosts\n# format: name|user|host|port|description\n' > "$hf"
+  echo "$hf"
 }
 
-# ── Helper: SSH — sshfs mount ─────────────────────────────────────────────────
+# ── sshub helpers ────────────────────────────────────────────────────────────
+function _rig_sshub_available() {
+  command -v sshub &>/dev/null
+}
+
+# Given an sshub host name, print "user|host|port"
+function _rig_sshub_resolve() {
+  local _name="$1" _info _user _host _port
+  _info=$(sshub host show "$_name" --format plain 2>/dev/null)
+  _user=$(echo "$_info" | awk -F': ' '/^User:/{print $2}')
+  _host=$(echo "$_info" | awk -F': ' '/^Address:/{print $2}')
+  _port=$(echo "$_info" | awk -F': ' '/^Port:/{print $2}')
+  echo "${_user:-$USER}|${_host:-$_name}|${_port:-22}"
+}
+
+# Pick an sshub host; prints "sshub|name"
+function _rig_sshub_pick() {
+  local header="${1:-Select sshub host}" _name
+  _name=$(sshub host list --format plain 2>/dev/null \
+    | fzf --header "$header  (Esc: back)" \
+          --preview 'sshub host show {} --format plain 2>/dev/null' \
+          --preview-window 'right:40%' \
+          --height 80% --border)
+  [[ -z "$_name" ]] && return 0
+  echo "sshub|${_name}"
+}
+
+# ── Unified host picker: saved hosts + ~/.ssh/config entries ──────────────────
+# Prints: "type|name|user|host|port"
+# type = "saved", "config" or "sshub"
+function _rig_hosts_pick() {
+  local header="${1:-Select host}"
+
+  # Prefer sshub when enabled and available
+  if [[ "$RIG_USE_SSHUB" == true ]] && _rig_sshub_available; then
+    _rig_sshub_pick "$header"
+    return 0
+  fi
+
+  local hf; hf=$(_rig_hosts_file)
+  local ssh_cfg="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
+  local -a _lines=()
+
+  # Saved rig hosts
+  while IFS='|' read -r _n _u _h _p _d || [[ -n "$_n" ]]; do
+    [[ "$_n" == \#* || -z "$_n" ]] && continue
+    _lines+=("[saved]  ${_n}  —  ${_u}@${_h}:${_p}  ${_d}")
+  done < "$hf"
+
+  # ssh/config hosts
+  if [[ -f "$ssh_cfg" ]]; then
+    while read -r _alias; do
+      _lines+=("[config] ${_alias}  —  from ~/.ssh/config")
+    done < <(grep -E '^Host ' "$ssh_cfg" | grep -v '[*?]' | awk '{print $2}')
+  fi
+
+  [[ ${#_lines[@]} -eq 0 ]] && {
+    gum style --foreground 196 "  No hosts found. Add one via 'Manage saved hosts'."
+    sleep 2; return 0
+  }
+
+  local selected
+  selected=$(printf '%s\n' "${_lines[@]}" \
+    | fzf --header "$header  (Esc: back)" \
+          --preview "
+            line={}
+            if [[ \$line == '[saved]'* ]]; then
+              name=\$(echo \$line | awk '{print \$2}')
+              grep \"^\$name|\" \"$hf\" 2>/dev/null | awk -F'|' '{printf \"Name: %s\nUser: %s\nHost: %s\nPort: %s\nDesc: %s\n\",\$1,\$2,\$3,\$4,\$5}'
+            else
+              alias=\$(echo \$line | awk '{print \$2}')
+              grep -A 8 \"^Host \$alias\$\" \"$ssh_cfg\" 2>/dev/null
+            fi" \
+          --preview-window 'right:40%' \
+          --height 80% --border)
+  [[ -z "$selected" ]] && return 0
+
+  # Parse and return structured data
+  if [[ "$selected" == "[saved]"* ]]; then
+    local _sname
+    _sname=$(echo "$selected" | awk '{print $2}')
+    local _n _u _h _p _d
+    while IFS='|' read -r _n _u _h _p _d || [[ -n "$_n" ]]; do
+      [[ "$_n" == "$_sname" ]] && { echo "saved|${_n}|${_u}|${_h}|${_p}"; return 0; }
+    done < "$hf"
+  else
+    local _alias
+    _alias=$(echo "$selected" | awk '{print $2}')
+    echo "config|${_alias}|${_alias}|${_alias}|22"
+  fi
+}
+
+# ── Build SSH connect string from _rig_hosts_pick output ─────────────────────
+# Usage: _rig_hosts_ssh_cmd "saved|name|user|host|port"
+# Prints the ssh command arguments
+function _rig_hosts_ssh_args() {
+  local _type _name _user _host _port
+  IFS='|' read -r _type _name _user _host _port <<< "$1"
+  if [[ "$_type" == "config" || "$_type" == "sshub" ]]; then
+    echo "$_name"   # just the alias, ssh/config or sshub handles the rest
+  else
+    if [[ "$_port" == "22" ]]; then
+      echo "${_user}@${_host}"
+    else
+      echo "-p ${_port} ${_user}@${_host}"
+    fi
+  fi
+}
+
+# ── Manage saved hosts (CRUD) ─────────────────────────────────────────────────
+function _rig_hosts_manage() {
+  if [[ "$RIG_USE_SSHUB" == true ]] && _rig_sshub_available; then
+    sshub
+    return 0
+  fi
+  local hf; hf=$(_rig_hosts_file)
+  while true; do
+    local -a _entries=()
+    while IFS='|' read -r _n _u _h _p _d || [[ -n "$_n" ]]; do
+      [[ "$_n" == \#* || -z "$_n" ]] && continue
+      _entries+=("${_n}  ${_u}@${_h}:${_p}  — ${_d}")
+    done < "$hf"
+    _entries+=("➕  Add new host")
+
+    local selected
+    selected=$(printf '%s\n' "${_entries[@]}" \
+      | fzf --header "Saved hosts  (Esc: back)" \
+            --height 80% --border \
+            --preview "
+              name=\$(echo {} | awk '{print \$1}')
+              grep \"^\$name|\" \"$hf\" 2>/dev/null \
+                | awk -F'|' '{printf \"Name: %s\nUser: %s\nHost: %s\nPort: %s\nDesc: %s\n\",\$1,\$2,\$3,\$4,\$5}'
+            " \
+            --preview-window 'right:40%')
+    [[ -z "$selected" ]] && return 0
+
+    if [[ "$selected" == "➕"* ]]; then
+      _rig_hosts_add "$hf"; continue
+    fi
+
+    local hname
+    hname=$(echo "$selected" | awk '{print $1}')
+    local host_action
+    host_action=$(gum choose \
+      --header "  $hname  (Esc: back)" \
+      "🔌  Connect" \
+      "📝  Edit" \
+      "🗑️   Delete")
+    case "$host_action" in
+      *"Connect"*)
+        local _row; _row=$(grep "^${hname}|" "$hf")
+        local _n _u _h _p _d
+        IFS='|' read -r _n _u _h _p _d <<< "$_row"
+        local _args; _args=$(_rig_hosts_ssh_args "saved|${_n}|${_u}|${_h}|${_p}")
+        ssh $=_args ;;
+      *"Edit"*)
+        _rig_hosts_edit "$hf" "$hname" ;;
+      *"Delete"*)
+        _rig_hosts_delete "$hf" "$hname" ;;
+    esac
+  done
+}
+
+function _rig_hosts_add() {
+  local hf="$1"
+  echo ""
+  gum style --bold "  Add new host"
+  local _n _u _h _p _d
+  _n=$(gum input --prompt "  name (alias) › " --placeholder "e.g. homelab")
+  [[ -z "$_n" ]] && return 0
+  # Check duplicate
+  if grep -q "^${_n}|" "$hf" 2>/dev/null; then
+    gum style --foreground 196 "  Name '$_n' already exists. Use Edit to modify it."; sleep 2; return 0
+  fi
+  _u=$(gum input --prompt "  user         › " --value "$USER" --placeholder "username")
+  [[ -z "$_u" ]] && _u="$USER"
+  _h=$(gum input --prompt "  host/IP      › " --placeholder "192.168.1.10 or hostname")
+  [[ -z "$_h" ]] && return 0
+  _p=$(gum input --prompt "  port         › " --value "22" --placeholder "22")
+  [[ -z "$_p" ]] && _p="22"
+  _d=$(gum input --prompt "  description  › " --placeholder "optional description")
+  echo "${_n}|${_u}|${_h}|${_p}|${_d}" >> "$hf"
+  gum style --foreground 82 "  ✓ Saved: $_n (${_u}@${_h}:${_p})"
+  sleep 1
+}
+
+function _rig_hosts_edit() {
+  local hf="$1" hname="$2"
+  local _row; _row=$(grep "^${hname}|" "$hf")
+  [[ -z "$_row" ]] && return 0
+  local _n _u _h _p _d
+  IFS='|' read -r _n _u _h _p _d <<< "$_row"
+  echo ""
+  gum style --bold "  Edit host: $_n"
+  local _nu _nh _np _nd
+  _nu=$(gum input --prompt "  user        › " --value "$_u")
+  _nh=$(gum input --prompt "  host/IP     › " --value "$_h")
+  _np=$(gum input --prompt "  port        › " --value "$_p")
+  _nd=$(gum input --prompt "  description › " --value "$_d")
+  # Replace line in file
+  local _new="${_n}|${_nu:-$_u}|${_nh:-$_h}|${_np:-$_p}|${_nd}"
+  # Use temp file for portability
+  local _tmp; _tmp=$(mktemp)
+  grep -v "^${hname}|" "$hf" > "$_tmp"
+  echo "$_new" >> "$_tmp"
+  mv "$_tmp" "$hf"
+  gum style --foreground 82 "  ✓ Updated: $_n"; sleep 1
+}
+
+function _rig_hosts_delete() {
+  local hf="$1" hname="$2"
+  if gum confirm "Delete host '$hname'?"; then
+    local _tmp; _tmp=$(mktemp)
+    grep -v "^${hname}|" "$hf" > "$_tmp"
+    mv "$_tmp" "$hf"
+    gum style --foreground 82 "  ✓ Deleted: $hname"; sleep 1
+  fi
+}
+
+# =============================================================================
+# SSH action helpers (all use _rig_hosts_pick)
+# =============================================================================
+
+# ── SSH: Connect ─────────────────────────────────────────────────────────────
+function _rig_ssh_connect() {
+  local picked; picked=$(_rig_hosts_pick "Connect to host")
+  [[ -z "$picked" ]] && return 0
+  local _type _name _user _host _port
+  IFS='|' read -r _type _name _user _host _port <<< "$picked"
+
+  local action
+  action=$(gum choose --header "  SSH → $_name  (Esc: back)" \
+    "Connect" "New tmux window")
+  [[ -z "$action" ]] && return 0
+
+  if [[ "$_type" == "sshub" ]]; then
+    case "$action" in
+      "Connect")         sshub host connect "$_name" ;;
+      "New tmux window") tmux new-window -n "$_name" "sshub host connect $_name" ;;
+    esac
+  else
+    local _args; _args=$(_rig_hosts_ssh_args "$picked")
+    case "$action" in
+      "Connect")         ssh $=_args ;;
+      "New tmux window") tmux new-window -n "$_name" "ssh $_args" ;;
+    esac
+  fi
+}
+
+# ── SSH: sshfs mount ─────────────────────────────────────────────────────────
 function _rig_ssh_sshfs() {
   if ! command -v sshfs &>/dev/null; then
     gum style --foreground 196 "  sshfs is not installed."; sleep 2; return 0
   fi
-  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
-  local host
-  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
-    | fzf --header 'Select host to mount | Esc: back' --height 80% --border)
-  [[ -z "$host" ]] && return 0
+  local picked; picked=$(_rig_hosts_pick "Select host to mount")
+  [[ -z "$picked" ]] && return 0
+  local _type _name _user _host _port
+  IFS='|' read -r _type _name _user _host _port <<< "$picked"
+
+  if [[ "$_type" == "sshub" ]]; then
+    local _resolved
+    _resolved=$(_rig_sshub_resolve "$_name")
+    IFS='|' read -r _user _host _port <<< "$_resolved"
+  fi
 
   local remote_dir
-  remote_dir=$(gum input \
-    --value "/home/$USER" \
-    --prompt "  remote dir  › " \
+  remote_dir=$(gum input --value "/home/$_user" --prompt "  remote dir  › " \
     --placeholder "Remote directory")
   [[ -z "$remote_dir" ]] && return 0
 
   local mount_point
-  mount_point=$(gum input \
-    --value "$HOME/mnt/$host" \
-    --prompt "  mount point › " \
+  mount_point=$(gum input --value "$HOME/mnt/$_name" --prompt "  mount point › " \
     --placeholder "Local mount point (created if missing)")
   [[ -z "$mount_point" ]] && return 0
 
   [[ ! -d "$mount_point" ]] && mkdir -p "$mount_point" \
     && gum style --foreground 82 "  ✓ Created $mount_point"
 
-  gum style --foreground 214 "  Mounting $host:$remote_dir → $mount_point..."
-  if sshfs "$host:$remote_dir" "$mount_point"; then
+  gum style --foreground 214 "  Mounting ${_user}@${_host}:$remote_dir → $mount_point..."
+  if sshfs -p "$_port" "${_user}@${_host}:${remote_dir}" "$mount_point"; then
     gum style --foreground 82 "  ✓ Mounted — unmount with: fusermount -u $mount_point"
   else
     gum style --foreground 196 "  ✗ Mount failed"
@@ -732,104 +1052,266 @@ function _rig_ssh_sshfs() {
   sleep 3
 }
 
-# ── Helper: SSH — SOCKS proxy tunnel ─────────────────────────────────────────
+# ── SSH: SOCKS proxy tunnel ───────────────────────────────────────────────────
 function _rig_ssh_socks() {
-  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
-  local host
-  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
-    | fzf --header 'Select host for SOCKS proxy | Esc: back' --height 80% --border)
-  [[ -z "$host" ]] && return 0
+  local picked; picked=$(_rig_hosts_pick "Select host for SOCKS proxy")
+  [[ -z "$picked" ]] && return 0
+  local _type _name _user _host _port
+  IFS='|' read -r _type _name _user _host _port <<< "$picked"
+
+  if [[ "$_type" == "sshub" ]]; then
+    local _resolved
+    _resolved=$(_rig_sshub_resolve "$_name")
+    IFS='|' read -r _user _host _port <<< "$_resolved"
+  fi
 
   local port
   port=$(gum input --value "1080" --prompt "  local SOCKS port › " --placeholder "1080")
   [[ -z "$port" ]] && return 0
 
-  gum style --foreground 214 "  SOCKS proxy via $host on localhost:$port"
-  gum style --foreground 245 "  Configure your browser/app to use SOCKS5 localhost:$port"
+  gum style --foreground 214 "  SOCKS proxy via $_name on localhost:$port"
+  gum style --foreground 245 "  Configure browser/app: SOCKS5 → localhost:$port"
   gum style --foreground 245 "  Ctrl+C to stop."
   sleep 1
-  ssh -D "$port" -N -C "$host"
+  local _args
+  if [[ "$_type" == "sshub" ]]; then
+    _args="-p $_port ${_user}@${_host}"
+  else
+    _args=$(_rig_hosts_ssh_args "$picked")
+  fi
+  ssh -D "$port" -N -C $=_args
 }
 
-# ── Helper: SSH — port forward tunnel ────────────────────────────────────────
+# ── SSH: port forward tunnel ──────────────────────────────────────────────────
 function _rig_ssh_tunnel() {
-  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
-  local host
-  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
-    | fzf --header 'Select SSH host | Esc: back' --height 80% --border)
-  [[ -z "$host" ]] && return 0
+  local picked; picked=$(_rig_hosts_pick "Select SSH host for tunnel")
+  [[ -z "$picked" ]] && return 0
+  local _type _name _user _host _port
+  IFS='|' read -r _type _name _user _host _port <<< "$picked"
+
+  if [[ "$_type" == "sshub" ]]; then
+    local _resolved
+    _resolved=$(_rig_sshub_resolve "$_name")
+    IFS='|' read -r _user _host _port <<< "$_resolved"
+  fi
 
   local direction
-  direction=$(gum choose \
-    --header "  Tunnel direction  (Esc: back)" \
+  direction=$(gum choose --header "  Tunnel direction  (Esc: back)" \
     "-L  Local → Remote   (access a remote service locally)" \
     "-R  Remote → Local   (expose a local service remotely)")
   [[ -z "$direction" ]] && return 0
 
-  local local_port
-  local_port=$(gum input --prompt "  local port   › " --placeholder "e.g. 8080")
+  local local_port remote_host remote_port
+  local_port=$(gum input  --prompt "  local port   › " --placeholder "e.g. 8080")
   [[ -z "$local_port" ]] && return 0
-
-  local remote_host
-  remote_host=$(gum input --value "localhost" --prompt "  remote host  › " --placeholder "localhost or 10.0.0.x")
+  remote_host=$(gum input --value "localhost" --prompt "  remote host  › " \
+    --placeholder "localhost or 10.0.0.x")
   [[ -z "$remote_host" ]] && return 0
-
-  local remote_port
   remote_port=$(gum input --prompt "  remote port  › " --placeholder "e.g. 5432")
   [[ -z "$remote_port" ]] && return 0
 
   local flag="-L"
   [[ "$direction" == "-R"* ]] && flag="-R"
 
-  gum style --foreground 214 "  Tunnel: ssh $flag ${local_port}:${remote_host}:${remote_port} $host"
+  local _args
+  if [[ "$_type" == "sshub" ]]; then
+    _args="-p $_port ${_user}@${_host}"
+  else
+    _args=$(_rig_hosts_ssh_args "$picked")
+  fi
+  gum style --foreground 214 \
+    "  Tunnel: ssh $flag ${local_port}:${remote_host}:${remote_port} $_args"
   gum style --foreground 245 "  Ctrl+C to stop."
   sleep 1
-  ssh "$flag" "${local_port}:${remote_host}:${remote_port}" -N -C "$host"
+  ssh "$flag" "${local_port}:${remote_host}:${remote_port}" -N -C $=_args
 }
 
-# ── Helper: SSH — run remote app locally (X11 forwarding) ────────────────────
+# ── SSH: run remote app locally (X11 forwarding) ─────────────────────────────
 function _rig_ssh_remote_app() {
-  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
-  local host
-  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
-    | fzf --header 'Select host | Esc: back' --height 80% --border)
-  [[ -z "$host" ]] && return 0
+  local picked; picked=$(_rig_hosts_pick "Select host for remote app")
+  [[ -z "$picked" ]] && return 0
+  local _type _name _user _host _port
+  IFS='|' read -r _type _name _user _host _port <<< "$picked"
+
+  if [[ "$_type" == "sshub" ]]; then
+    local _resolved
+    _resolved=$(_rig_sshub_resolve "$_name")
+    IFS='|' read -r _user _host _port <<< "$_resolved"
+  fi
 
   local app
-  app=$(gum input \
-    --prompt "  remote command › " \
+  app=$(gum input --prompt "  remote command › " \
     --placeholder "e.g. firefox, xterm, code, gimp")
   [[ -z "$app" ]] && return 0
 
-  gum style --foreground 214 "  Launching $app from $host with X11 forwarding..."
+  local _args
+  if [[ "$_type" == "sshub" ]]; then
+    _args="-p $_port ${_user}@${_host}"
+  else
+    _args=$(_rig_hosts_ssh_args "$picked")
+  fi
+  gum style --foreground 214 "  Launching $app via X11 forwarding..."
   sleep 1
-  # -X X11 forwarding, -C compression, run app in background
-  ssh -X -C "$host" "DISPLAY=:0 $app" &
+  ssh -X -C $=_args "DISPLAY=:0 $app" &
   local _pid=$!
   gum style --foreground 82 "  ✓ $app launched (PID $_pid)"
-  gum style --foreground 245 "  Process runs in background. Close the app window to stop."
+  gum style --foreground 245 "  Runs in background. Close the app window to stop."
   sleep 3
 }
 
-# ── Helper: Backup — pick SSH host + remote path as rsync destination ─────────
-# Returns "host:/remote/path" or empty string if cancelled
+# ── Backup: pick SSH host (legacy, kept for compat) ───────────────────────────
 function _rig_backup_pick_ssh_dest() {
-  local ssh_config="${RIG_SSH_CONFIG:-$HOME/.ssh/config}"
-  local host
-  host=$(grep -E '^Host ' "$ssh_config" 2>/dev/null | grep -v '[*?]' | awk '{print $2}' \
-    | fzf --header 'Select SSH host for backup | Esc: cancel' --height 80% --border)
-  [[ -z "$host" ]] && return 0
-
+  local picked; picked=$(_rig_hosts_pick "Select SSH host for backup")
+  [[ -z "$picked" ]] && return 0
+  local _type _name _user _host _port
+  IFS='|' read -r _type _name _user _host _port <<< "$picked"
   local remote_path
-  remote_path=$(gum input \
-    --value "/home/$USER" \
-    --prompt "  remote backup path › " \
-    --placeholder "Remote directory")
+  remote_path=$(gum input --value "/home/$_user" \
+    --prompt "  remote backup path › " --placeholder "Remote directory")
   [[ -z "$remote_path" ]] && return 0
-
-  echo "${host}:${remote_path}"
+  echo "${_user}@${_host}:${remote_path}"
 }
 
+
+# =============================================================================
+# Tmux / Sesh helpers
+# =============================================================================
+
+# ── Connect to existing session via sesh ─────────────────────────────────────
+function _rig_tmux_connect() {
+  if ! command -v sesh &>/dev/null; then
+    gum style --foreground 196 "  sesh is not installed."; sleep 2; return 0
+  fi
+  local session
+  session=$(sesh list \
+    | fzf --header "Connect to session  (Esc: back)" \
+          --height 80% --border \
+          --preview 'tmux list-windows -t {} 2>/dev/null || echo "Not a tmux session"')
+  [[ -z "$session" ]] && return 0
+  sesh connect "$session"
+}
+
+# ── Create new session ────────────────────────────────────────────────────────
+function _rig_tmux_new() {
+  local name
+  name=$(gum input --prompt "  session name › " \
+    --value "$(basename "$PWD")" \
+    --placeholder "session name")
+  [[ -z "$name" ]] && return 0
+
+  local start_dir
+  start_dir=$(gum input --prompt "  start dir    › " \
+    --value "$PWD" \
+    --placeholder "starting directory")
+  [[ -z "$start_dir" ]] && start_dir="$PWD"
+
+  if tmux has-session -t "$name" 2>/dev/null; then
+    gum style --foreground 226 "  Session '$name' already exists — connecting..."
+    sleep 1
+  else
+    tmux new-session -d -s "$name" -c "$start_dir"
+    gum style --foreground 82 "  ✓ Created session: $name"
+    sleep 1
+  fi
+
+  # Attach or switch depending on context
+  if [[ -n "$TMUX" ]]; then
+    tmux switch-client -t "$name"
+  else
+    tmux attach-session -t "$name"
+  fi
+}
+
+# ── Kill session ──────────────────────────────────────────────────────────────
+function _rig_tmux_kill() {
+  if ! command -v sesh &>/dev/null; then
+    gum style --foreground 196 "  sesh is not installed."; sleep 2; return 0
+  fi
+
+  local sessions
+  sessions=$(tmux list-sessions -F "#{session_name}  [#{session_windows} windows]  #{?session_attached,(attached),}" 2>/dev/null)
+  [[ -z "$sessions" ]] && { gum style --foreground 196 "  No tmux sessions running."; sleep 2; return 0; }
+
+  local selected
+  selected=$(echo "$sessions" \
+    | fzf --header "Select session to kill  (Esc: back)" \
+          --height 80% --border \
+          --preview 'tmux list-windows -t $(echo {} | awk "{print \$1}") 2>/dev/null')
+  [[ -z "$selected" ]] && return 0
+
+  local session_name
+  session_name=$(echo "$selected" | awk '{print $1}')
+
+  if gum confirm "Kill session '$session_name'?"; then
+    tmux kill-session -t "$session_name"
+    gum style --foreground 82 "  ✓ Killed: $session_name"; sleep 1
+  fi
+}
+
+# ── Launch workflow template ──────────────────────────────────────────────────
+function _rig_tmux_template() {
+  local tpl_global="${RIG_TEMPLATES_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/rig/templates}"
+  local tpl_local="$PWD/.rig"
+
+  # Entries format: "FULL_PATH\tDISPLAY_LABEL"
+  # fzf shows only col 2 (--with-nth 2), preview and extraction use col 1
+  local -a _entries=()
+  if [[ -d "$tpl_local" ]]; then
+    for f in "$tpl_local"/*.sh; do
+      [[ -f "$f" ]] || continue
+      _entries+=("${f}"$'\t'"[local]  $(basename "${f%.sh}")")
+    done
+  fi
+  if [[ -d "$tpl_global" ]]; then
+    for f in "$tpl_global"/*.sh; do
+      [[ -f "$f" ]] || continue
+      _entries+=("${f}"$'\t'"[global] $(basename "${f%.sh}")")
+    done
+  fi
+
+  if [[ ${#_entries[@]} -eq 0 ]]; then
+    gum style --foreground 196 "  No templates found."
+    gum style --foreground 245 "  Place .sh files in:"
+    gum style --foreground 245 "    Local:  $PWD/.rig/"
+    gum style --foreground 245 "    Global: $tpl_global/"
+    sleep 3; return 0
+  fi
+
+  local selected
+  selected=$(printf '%s\n' "${_entries[@]}" \
+    | fzf --header "Select workflow template  (Esc: back)" \
+          --height 80% --border \
+          --delimiter $'\t' \
+          --with-nth 2 \
+          --preview 'head -50 {1}' \
+          --preview-window 'right:55%')
+  [[ -z "$selected" ]] && return 0
+
+  local tpl_path
+  tpl_path=$(printf '%s' "$selected" | cut -f1)
+
+  if [[ ! -f "$tpl_path" ]]; then
+    gum style --foreground 196 "  Template not found: $tpl_path"; sleep 2; return 0
+  fi
+
+  # Ask for project directory — default is $PWD
+  local proj_dir
+  proj_dir=$(gum input \
+    --prompt "  project dir › " \
+    --value "$PWD" \
+    --placeholder "Path to your project")
+  [[ -z "$proj_dir" ]] && return 0
+  proj_dir="${proj_dir/#\~/$HOME}"
+
+  if [[ ! -d "$proj_dir" ]]; then
+    gum style --foreground 196 "  Directory not found: $proj_dir"; sleep 2; return 0
+  fi
+
+  gum style --foreground 214 "  Launching: $(basename "${tpl_path%.sh}")"
+  gum style --foreground 245 "  Project:   $proj_dir"
+  echo ""
+  bash "$tpl_path" "$proj_dir" "$(basename "$proj_dir")"
+}
 
 # Usage: _rig_log_menu <path_or_special> [source_cmd]
 # Special names: "journalctl-boot", "dmesg"
